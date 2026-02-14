@@ -159,6 +159,7 @@ function onIncidentUpdate(d) {
 }
 
 function showIncident(inc) {
+    lastSeenIncidentId = inc.id;
     document.getElementById('empty-state').classList.add('hidden');
     document.getElementById('incident-view').classList.remove('hidden');
     document.getElementById('comments-section').classList.remove('hidden');
@@ -471,22 +472,20 @@ async function fetchVoiceSummary() {
     } catch(e) { console.error(e); }
 }
 
-// Auto-refresh stats + check for incidents
+// Auto-refresh stats
 setInterval(refreshStats, 10000);
+
+// Poll for new incidents (catch ones missed by WebSocket)
+let lastSeenIncidentId = null;
 setInterval(async () => {
     if (!currentUser) return;
     try {
         const incs = await fetch('/api/incidents').then(r=>r.json());
         const active = incs.find(i => !['resolved','rejected'].includes(i.status));
-        if (active && (!currentIncident || currentIncident.id !== active.id)) {
-            // New incident appeared — show it
-            currentIncident = active;
-            timelineSteps = [];
-            document.getElementById('timeline').innerHTML = '';
+        if (active && active.id !== lastSeenIncidentId && !currentIncident) {
+            // Brand new incident we haven't seen
+            lastSeenIncidentId = active.id;
             showIncident(active);
-        } else if (active && currentIncident && currentIncident.id === active.id && currentIncident.status !== active.status) {
-            // Same incident, status changed
-            onIncidentUpdate(active);
         }
     } catch(e) {}
-}, 3000);
+}, 5000);

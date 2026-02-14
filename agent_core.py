@@ -34,6 +34,30 @@ class AgentOps:
         """Start the agent monitoring loop."""
         self.running = True
         await sandbox.create()
+
+        # Rebuild active incidents from DB (survives restarts)
+        db = SessionLocal()
+        try:
+            open_incs = db.query(Incident).filter(
+                Incident.status.notin_(["resolved", "rejected"])
+            ).all()
+            for inc in open_incs:
+                rc = (inc.root_cause or "").lower()
+                if "config" in rc or "json" in rc:
+                    ft = "bad_config"
+                elif "nameerror" in rc or "bug" in rc or "undefined" in rc:
+                    ft = "bug"
+                elif "timeout" in rc or "sleep" in rc:
+                    ft = "slow"
+                elif "crash" in rc or "process" in rc:
+                    ft = "crash"
+                else:
+                    ft = "unknown"
+                self._active_incidents[ft] = inc.id
+                self.incidents_total += 1
+        finally:
+            db.close()
+
         # Start the target app
         await app_instance.start()
         mode_msg = f"Blaxel sandbox '{app_instance.mode}'" if app_instance.mode == "blaxel" else f"localhost:{app_instance.app_port}"
@@ -248,6 +272,22 @@ class AgentOps:
                 if iid == incident_id:
                     fault_type = ft
                     break
+
+            # Fallback: infer fault type from incident data if not in memory (e.g. after restart)
+            if not fault_type and incident.root_cause:
+                rc = incident.root_cause.lower()
+                if "config" in rc or "json" in rc:
+                    fault_type = "bad_config"
+                elif "nameerror" in rc or "bug" in rc or "undefined" in rc or "zerodivision" in rc:
+                    fault_type = "bug"
+                elif "timeout" in rc or "sleep" in rc or "slow" in rc:
+                    fault_type = "slow"
+                elif "crash" in rc or "process" in rc or "killed" in rc or "connection refused" in rc:
+                    fault_type = "crash"
+                else:
+                    fault_type = "bug"  # safe default — restores handler.py
+                # Re-register so dedup works
+                self._active_incidents[fault_type] = incident_id
 
             if action == "approve":
                 incident.status = "deploying"

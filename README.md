@@ -12,6 +12,21 @@ Built in 5 hours at the **Iterate x CBS AI Club Hackathon** at Columbia Business
 
 ---
 
+## 🌐 Live Demo
+
+> **Deployed and running — try it now!**
+
+| Link | Description |
+|---|---|
+| [**🖥️ Dashboard**](https://her-believe-page-bean.trycloudflare.com) | Main AgentOps dashboard — login, inject faults, watch AI auto-heal |
+| [**🛒 Shop**](https://her-believe-page-bean.trycloudflare.com/shop) | E-commerce storefront — browse products, add to cart, checkout |
+| [**📡 Live API**](https://her-believe-page-bean.trycloudflare.com/live) | Real-time API viewer — products, orders, analytics, users (auto-refreshes) |
+| [**☁️ Blaxel Sandbox**](https://app.blaxel.ai) | `agentops-ecom` sandbox running the target e-commerce app |
+
+**Team Logins:** Bhumika (`bds9746@nyu.edu`) · Yash (`yp2693@nyu.edu`) · Shweta (`ss19623@nyu.edu`) — password: `1234`
+
+---
+
 ## 🎯 The Problem
 
 Production incidents are stressful, time-consuming, and often happen at the worst times. Engineers scramble to diagnose issues, worry about making things worse with a fix, and lack visibility into what's happening across the team. Traditional monitoring tools alert you — but they don't *fix* anything.

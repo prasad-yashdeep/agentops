@@ -166,7 +166,7 @@
             const r = await fetch(`/app/${path}`);
             return await r.json();
         } catch(e) {
-            return { error: e.message };
+            return { _fetchError: true, error: e.message };
         }
     }
 
@@ -190,7 +190,7 @@
         updateHealthDot(health);
 
         // Health grid
-        if (!health.error) {
+        if (!health._fetchError && !health.error_type) {
             const d = health.data || health;
             document.getElementById('health-grid').innerHTML = `
                 <div class="bg-zinc-900 rounded-xl p-3 text-center fade-in">
@@ -230,9 +230,13 @@
         const el = document.getElementById(`${name}-data`);
         const data = await fetchJSON(`api/${name}`);
 
-        if (data.error) {
+        if (data._fetchError || data.status === 'app_unreachable') {
+            el.innerHTML = `<div class="bg-zinc-800 rounded-lg p-3 text-xs text-zinc-500">Connecting...</div>`;
+            return;
+        }
+        if (data.error && (data.type || data.traceback)) {
             el.innerHTML = `<div class="bg-red-500/5 border border-red-500/20 rounded-lg p-3 text-xs text-red-400">
-                <strong>Error:</strong> ${data.error}${data.type ? ` (${data.type})` : ''}
+                <strong>${data.type || 'Error'}:</strong> ${data.error}
                 ${data.traceback ? `<pre class="mt-2 text-zinc-600 whitespace-pre-wrap">${esc(data.traceback).slice(0,300)}</pre>` : ''}
             </div>`;
             return;
@@ -326,20 +330,23 @@
         const data = await fetchJSON(path);
         const ms = (performance.now() - start).toFixed(0);
 
-        const isError = !!data.error;
+        const isError = !!(data._fetchError || data.status === 'app_unreachable' || (data.error && (data.type || data.traceback)));
         urlEl.innerHTML = `<span class="text-green-400">GET</span> <span class="text-zinc-300">/${path}</span> <span class="${isError ? 'text-red-400' : 'text-green-400'}">${isError ? '✗ error' : '✓ 200 OK'}</span> <span class="text-zinc-600">${ms}ms</span>`;
         jsonEl.innerHTML = syntaxHL(JSON.stringify(data, null, 2));
     }
 
     // ─── Helpers ────────────────────────────────────────────────────
+    let lastHealthy = true; // Don't flicker on transient fetch failures
     function updateHealthDot(h) {
+        if (h._fetchError) return; // Skip — don't flicker on network hiccups
         const dot = document.getElementById('health-dot');
         const ring = document.getElementById('health-ring');
         const text = document.getElementById('health-text');
-        const ok = h.healthy || (h.data && h.data.status === 'healthy');
+        const ok = h.healthy === true || (h.data && h.data.status === 'healthy') || (h.status === 'healthy');
+        lastHealthy = ok;
         dot.className = `w-2.5 h-2.5 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'}`;
         ring.className = `absolute inset-0 w-2.5 h-2.5 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'} pulse-ring`;
-        text.textContent = ok ? 'Healthy' : (h.error || 'Error');
+        text.textContent = ok ? 'Healthy' : (h.error || h.error_type || 'Error');
         text.className = ok ? 'text-zinc-400' : 'text-red-400';
     }
 

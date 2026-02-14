@@ -159,6 +159,7 @@ function onIncidentUpdate(d) {
 }
 
 function showIncident(inc) {
+    currentIncident = inc;
     lastSeenIncidentId = inc.id;
     document.getElementById('empty-state').classList.add('hidden');
     document.getElementById('incident-view').classList.remove('hidden');
@@ -321,13 +322,25 @@ function showResolved() {
 }
 
 async function doApprove(action) {
-    if (!currentIncident || !currentUser) return;
+    console.log('doApprove called:', action, 'incident:', currentIncident?.id, 'user:', currentUser);
+    if (!currentIncident || !currentUser) {
+        console.error('Missing:', !currentIncident ? 'incident' : 'user');
+        return;
+    }
     const comment = action === 'reject' ? (prompt('Reason?') || '') : '';
     hideActions();
-    await fetch(`/api/incidents/${currentIncident.id}/approve`, {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ user_name: currentUser, action, comment }),
-    });
+    addStep('⏳', action === 'approve' ? 'Deploying...' : 'Processing...', `${currentUser} ${action === 'approve' ? 'approved' : 'rejected'} the fix`, 'purple', true);
+    try {
+        const res = await fetch(`/api/incidents/${currentIncident.id}/approve`, {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ user_name: currentUser, action, comment }),
+        });
+        const data = await res.json();
+        console.log('Approve response:', data);
+    } catch(e) {
+        console.error('Approve failed:', e);
+        addStep('❌', 'Error', `Failed to send approval: ${e.message}`, 'red');
+    }
 }
 
 function doOverride() {

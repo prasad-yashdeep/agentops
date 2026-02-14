@@ -1,11 +1,20 @@
 {
-    "version": "1.0.0",
-    "database_url": "postgresql://admin:secret@db.internal:5432/production",
-    "cache_ttl": 300,
-    "max_connections": 50,
-    "debug": false,
+    "version": "2.3.1",
+    "environment": "production",
+    "database_url": "postgresql://app_user:s3cret_p@ss@db-primary.internal:5432/ecommerce",
+    "redis_url": "redis://cache.internal:6379/0",
+    "cache_enabled": true,
+    "cache_ttl_seconds": 300,
+    "max_connections": 100,
+    "rate_limit_per_minute": 1000,
+    "stripe_api_key": "sk_live_***REDACTED***",
+    "tax_rate": 0.08875,
+    "shipping_flat_rate": 5.99,
     "feature_flags": {
-        "new_dashboard": true,
-        "beta_api": false
-    }
+        "new_checkout_flow": true,
+        "recommendation_engine": true,
+        "dark_mode": false
+    },
+    "alert_email": "ops@company.com",
+    "debug": false
 }

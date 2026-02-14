@@ -422,17 +422,28 @@ Respond in JSON:
             }
 
         elif fault_type == "bug":
+            # Extract the actual error line from traceback
+            tb_lines = traceback_str.strip().split("\n") if traceback_str else []
+            error_line = tb_lines[-1] if tb_lines else error
+            file_line = ""
+            for l in tb_lines:
+                if "handler.py" in l:
+                    file_line = l.strip()
+
             return {
-                "root_cause": f"Python error in handler.py — {error_type}: {error}",
+                "root_cause": f"Code bug in handler.py — {error_line}. A developer referenced a function that doesn't exist in the codebase.",
                 "reasoning": (
-                    f"1. Health endpoint returned 500\n"
-                    f"2. Exception: {error_type}: {error}\n"
-                    f"3. Traceback:\n{traceback_str[:800]}\n"
-                    f"4. The handler.py file has a code bug that needs to be fixed"
+                    f"1. Health endpoint returned HTTP 500 with {error_type}\n"
+                    f"2. Error: {error}\n"
+                    f"3. Location: {file_line}\n"
+                    f"4. Full traceback:\n{traceback_str[:1000]}\n"
+                    f"5. Root cause: A code change introduced a call to verify_database_connection() which is not defined anywhere.\n"
+                    f"6. Additionally, compute_analytics() has a division-by-zero bug.\n"
+                    f"7. Fix: Restore validate() to use direct config checks. Fix analytics division."
                 ),
                 "category": "bug",
                 "file_at_fault": "handler.py",
-                "line_hint": traceback_str.split("\n")[-2] if traceback_str else "unknown",
+                "line_hint": file_line or error_line,
             }
 
         elif fault_type == "slow":
@@ -548,28 +559,33 @@ Respond in JSON:
 
         elif fault_type == "bug":
             return {
-                "fix_description": "Restore handler.py — the current version has a NameError in validate() (references undefined variable 'check_database_connection').",
+                "fix_description": "Revert handler.py — validate() calls undefined verify_database_connection(). Restore direct config assertion. Also fix ZeroDivisionError in compute_analytics().",
                 "fix_diff": (
                     "--- handler.py (buggy)\n"
                     "+++ handler.py (fixed)\n"
                     "@@ def validate():\n"
-                    '-    return check_database_connection  # NameError: undefined\n'
-                    '+    return True\n'
+                    '-    status = verify_database_connection(config["database_url"])\n'
+                    '-    assert status.is_connected, "Database health check failed"\n'
+                    '+    assert config.get("database_url"), "Database URL not configured"\n'
+                    '+    assert len(PRODUCTS) > 0, "Product catalog is empty"\n'
+                    '+    assert len(USERS) > 0, "User database is empty"\n'
+                    "     return True\n"
                     "\n"
-                    "@@ def compute_stats():\n"
-                    '-    inactive_ratio = total / (total - active)  # ZeroDivisionError\n'
-                    '+    inactive = total - active\n'
-                    '+    inactive_ratio = total / inactive if inactive > 0 else 0\n'
+                    "@@ def compute_analytics():\n"
+                    '-    avg_order_value = total_revenue / (len(ORDERS) - len(ORDERS))  # BUG\n'
+                    '+    avg_order_value = total_revenue / len(ORDERS) if ORDERS else 0\n'
                 ),
-                "fix_code": "# Restore handler.py from known-good backup",
+                "fix_code": "# Restore handler.py from last known-good version",
                 "test_code": (
-                    "import importlib.util, os\n"
+                    "import importlib.util\n"
                     "spec = importlib.util.spec_from_file_location('h', 'target_app/handler.py')\n"
                     "mod = importlib.util.module_from_spec(spec)\n"
                     "spec.loader.exec_module(mod)\n"
                     "assert mod.validate() == True, 'validate() failed'\n"
-                    "assert len(mod.get_users()) > 0, 'get_users() empty'\n"
-                    "print('✅ handler.py loads and validates correctly')"
+                    "assert len(mod.get_products()) > 0, 'no products'\n"
+                    "stats = mod.compute_analytics()\n"
+                    "assert 'total_revenue' in stats, 'analytics broken'\n"
+                    "print(f'✅ All checks passed — {len(mod.get_products())} products, revenue=${stats[\"total_revenue\"]}')"
                 ),
                 "risk_level": "low",
             }

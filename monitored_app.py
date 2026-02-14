@@ -188,86 +188,64 @@ class MonitoredApp:
             }
 
         elif fault_type == "bug":
-            # Inject a real Python bug into handler.py
-            buggy_handler = '''"""
-Business logic handler — BUGGY VERSION (injected fault)
-"""
-
-USERS_DB = [
-    {"id": 1, "name": "Alice Chen", "role": "engineer", "active": True},
-    {"id": 2, "name": "Bob Smith", "role": "designer", "active": True},
-    {"id": 3, "name": "Carol Williams", "role": "manager", "active": True},
-    {"id": 4, "name": "Dave Johnson", "role": "engineer", "active": False},
-]
-
-
-def validate():
-    """Health check — this will crash due to undefined variable."""
-    return check_database_connection  # NameError: undefined variable
-
-
-def get_users():
-    return [u for u in USERS_DB if u["active"]]
-
-
-def compute_stats():
-    total = len(USERS_DB)
-    active = len([u for u in USERS_DB if u["active"]])
-    # Bug: division by zero when no inactive users
-    inactive_ratio = total / (total - active)
-    return {"total": total, "active": active, "ratio": inactive_ratio}
-
-
-def process_data(data):
-    value = data.get("value", 0)
-    return value * 2
-'''
-            self.write_file("handler.py", buggy_handler)
+            # Inject a real Python bug — read current handler, corrupt the validate function
+            buggy = self.get_file("handler.py")
+            # Replace validate() to reference an undefined variable
+            buggy = buggy.replace(
+                '''def validate():
+    """Health check — verifies all subsystems are operational."""
+    config = _load_config()
+    assert config.get("database_url"), "Database URL not configured"
+    assert len(PRODUCTS) > 0, "Product catalog is empty"
+    assert len(USERS) > 0, "User database is empty"
+    return True''',
+                '''def validate():
+    """Health check — verifies all subsystems are operational."""
+    config = _load_config()
+    # BUG: someone referenced a function that doesn't exist
+    status = verify_database_connection(config["database_url"])
+    assert status.is_connected, "Database health check failed"
+    assert len(PRODUCTS) > 0, "Product catalog is empty"
+    return True'''
+            )
+            # Also inject a division by zero in analytics
+            buggy = buggy.replace(
+                '    avg_order_value = total_revenue / len(ORDERS) if ORDERS else 0',
+                '    avg_order_value = total_revenue / (len(ORDERS) - len(ORDERS))  # BUG: always divides by zero'
+            )
+            self.write_file("handler.py", buggy)
             return {
                 "fault": "bug",
-                "detail": "handler.py replaced with buggy version (NameError in validate())",
+                "detail": "handler.py corrupted — NameError in validate() (undefined verify_database_connection) + ZeroDivisionError in analytics",
                 "file_modified": "handler.py",
             }
 
         elif fault_type == "slow":
-            # Inject time.sleep into handler
-            slow_handler = '''"""
-Business logic handler — SLOW VERSION (injected fault)
-"""
-import time
-
-USERS_DB = [
-    {"id": 1, "name": "Alice Chen", "role": "engineer", "active": True},
-    {"id": 2, "name": "Bob Smith", "role": "designer", "active": True},
-    {"id": 3, "name": "Carol Williams", "role": "manager", "active": True},
-    {"id": 4, "name": "Dave Johnson", "role": "engineer", "active": False},
-]
-
-
-def validate():
-    """Simulating slow database connection check."""
-    time.sleep(8)  # Blocking call — should be async or cached
-    return True
-
-
-def get_users():
-    time.sleep(8)
-    return [u for u in USERS_DB if u["active"]]
-
-
-def compute_stats():
-    time.sleep(8)
-    return {"total": len(USERS_DB), "active": 3}
-
-
-def process_data(data):
-    time.sleep(8)
-    return data.get("value", 0) * 2
-'''
-            self.write_file("handler.py", slow_handler)
+            # Inject time.sleep into the validate function
+            current = self.get_file("handler.py")
+            slow = current.replace(
+                '''def validate():
+    """Health check — verifies all subsystems are operational."""
+    config = _load_config()
+    assert config.get("database_url"), "Database URL not configured"
+    assert len(PRODUCTS) > 0, "Product catalog is empty"
+    assert len(USERS) > 0, "User database is empty"
+    return True''',
+                '''def validate():
+    """Health check — verifies all subsystems are operational."""
+    import time
+    # BUG: synchronous sleep in request path — someone added debug timing
+    time.sleep(10)  # TODO: remove before deploy!!
+    config = _load_config()
+    assert config.get("database_url"), "Database URL not configured"
+    assert len(PRODUCTS) > 0, "Product catalog is empty"
+    assert len(USERS) > 0, "User database is empty"
+    return True'''
+            )
+            self.write_file("handler.py", slow)
             return {
                 "fault": "slow",
-                "detail": "handler.py injected with time.sleep(8) in all functions",
+                "detail": "handler.py injected with time.sleep(10) in validate() — someone left debug code in production",
                 "file_modified": "handler.py",
             }
 

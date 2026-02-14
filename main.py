@@ -212,9 +212,7 @@ async def start_agent():
 @app.get("/api/voice/summary")
 async def voice_summary():
     stats = agent.get_stats()
-    summary = await voice_alerts.generate_summary(
-        stats["incidents_resolved"], stats["auto_resolved"], 30.0,
-    )
+    summary = await voice_alerts.generate_summary(stats)
     return summary
 
 

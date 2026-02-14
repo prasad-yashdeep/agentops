@@ -107,10 +107,10 @@
                 </div>
                 <h2 class="text-2xl font-bold mb-2">All Systems Operational</h2>
                 <p class="text-zinc-500 text-sm">Agent is monitoring your app. Inject a fault to see it in action.</p>
-                <div class="mt-6 flex items-center gap-3 text-xs text-zinc-600">
+                <div id="env-info" class="mt-6 flex items-center gap-3 text-xs text-zinc-600">
                     <span>📡 Health checks every 5s</span>
                     <span>•</span>
-                    <span>🎯 Target: localhost:8001</span>
+                    <span id="target-info">🎯 Connecting...</span>
                 </div>
             </div>
 
@@ -154,7 +154,7 @@
     <div id="inject-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center z-50" onclick="if(event.target===this)hideInjectModal()">
         <div class="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-[440px] shadow-2xl">
             <h3 class="text-lg font-bold mb-1">💥 Inject a Real Fault</h3>
-            <p class="text-xs text-zinc-500 mb-4">These modify actual source files and kill real processes.</p>
+            <p class="text-xs text-zinc-500 mb-4">These modify actual source files and kill real processes inside the <span id="modal-env" class="text-purple-400">Blaxel sandbox</span>.</p>
             <div class="space-y-2">
                 <button onclick="injectFault('crash')" class="w-full bg-zinc-800 hover:bg-red-500/10 border border-zinc-700 hover:border-red-500/30 px-4 py-3 rounded-xl text-left transition group">
                     <div class="font-semibold text-sm group-hover:text-red-400">💀 Kill Process</div>

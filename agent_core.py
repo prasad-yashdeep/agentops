@@ -36,7 +36,8 @@ class AgentOps:
         await sandbox.create()
         # Start the target app
         await app_instance.start()
-        await self._log_activity(None, "agent", "started", "AgentOps monitoring started — target app running on :8001")
+        mode_msg = f"Blaxel sandbox '{app_instance.mode}'" if app_instance.mode == "blaxel" else f"localhost:{app_instance.app_port}"
+        await self._log_activity(None, "agent", "started", f"AgentOps monitoring started — target app on {mode_msg}")
         await manager.broadcast("agent_status", {"running": True})
 
         while self.running:
@@ -104,8 +105,8 @@ class AgentOps:
         try:
             # Gather real evidence
             app_logs = app_instance.get_logs(limit=20)
-            handler_code = app_instance.get_file("handler.py")
-            config_content = app_instance.get_file("config.json")
+            handler_code = await app_instance.get_file("handler.py")
+            config_content = await app_instance.get_file("config.json")
 
             error_detail = health.get("error", "Unknown")
             traceback_str = health.get("traceback", "")

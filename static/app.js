@@ -51,16 +51,28 @@ function joinSession() {
 
 async function loadInitialData() {
     try {
-        const [inc, act, stats] = await Promise.all([
+        const [inc, act, stats, target] = await Promise.all([
             fetch('/api/incidents').then(r=>r.json()),
             fetch('/api/activity?limit=50').then(r=>r.json()),
             fetch('/api/agent/status').then(r=>r.json()),
+            fetch('/api/target-app').then(r=>r.json()),
         ]);
         // Show the most recent unresolved incident
         const active = inc.find(i => !['resolved','rejected'].includes(i.status));
         if (active) showIncident(active);
         act.reverse().forEach(a => addActivity(a, true));
         updateStatsDisplay(stats);
+
+        // Show environment info
+        const ti = document.getElementById('target-info');
+        const me = document.getElementById('modal-env');
+        if (target.mode === 'blaxel') {
+            ti.innerHTML = `🎯 <span class="text-purple-400">Blaxel Sandbox: ${target.sandbox}</span> (port ${target.port})`;
+            if (me) me.textContent = `Blaxel sandbox "${target.sandbox}"`;
+        } else {
+            ti.textContent = `🎯 Target: localhost:${target.port}`;
+            if (me) me.textContent = 'local environment';
+        }
     } catch(e) { console.error(e); }
 }
 

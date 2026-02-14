@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from db import init_db, SessionLocal, Incident, Approval, Comment, ActivityLog, LearningRecord, gen_id
 from schemas import IncidentOut, ApprovalCreate, CommentCreate, CommentOut, ApprovalOut, ActivityOut, FaultInject
-from monitored_app import app_instance, TARGET_PORT
+from monitored_app import app_instance, TARGET_PORT, BL_SANDBOX_NAME
 from agent_core import agent
 from ws_manager import manager
 from voice_alerts import voice_alerts
@@ -180,8 +180,9 @@ async def get_health():
 async def target_app_info():
     return {
         "running": app_instance.is_running(),
-        "port": TARGET_PORT,
-        "url": f"http://localhost:{TARGET_PORT}",
+        "port": app_instance.app_port,
+        "mode": app_instance.mode,
+        "sandbox": BL_SANDBOX_NAME if app_instance.mode == "blaxel" else None,
         "active_fault": app_instance.active_fault,
         "logs_tail": app_instance.get_logs(limit=10),
     }

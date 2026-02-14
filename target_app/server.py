@@ -168,7 +168,7 @@ if __name__ == "__main__":
     log("INFO", f"   Config: {CONFIG_PATH}")
     log("INFO", f"   Handler: {HANDLER_PATH}")
     log("INFO", f"   Endpoints: /health, /api/products, /api/orders, /api/analytics, /api/users, /api/checkout")
-    server = HTTPServer(("127.0.0.1", port), AppHandler)
+    server = HTTPServer(("0.0.0.0", port), AppHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

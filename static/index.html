@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgentOps — Self-Healing DevOps</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter'], mono: ['JetBrains Mono'] },
+                    colors: {
+                        surface: { 50: '#0a0a0f', 100: '#12121a', 200: '#1a1a2e', 300: '#252540' },
+                        accent: { DEFAULT: '#6c5ce7', light: '#a29bfe', dim: '#4a3fb5' },
+                        ok: '#00b894', warn: '#fdcb6e', danger: '#e17055', crit: '#d63031',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background: #0a0a0f; font-family: 'Inter', sans-serif; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .glow { box-shadow: 0 0 20px rgba(108,92,231,0.15); }
+        .pulse-dot { animation: pulse 2s infinite; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .slide-in { animation: slideIn 0.3s ease-out; }
+        @keyframes slideIn {
+            from { transform: translateY(10px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .severity-critical { border-left: 3px solid #d63031; }
+        .severity-high { border-left: 3px solid #e17055; }
+        .severity-medium { border-left: 3px solid #fdcb6e; }
+        .severity-low { border-left: 3px solid #00b894; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #12121a; }
+        ::-webkit-scrollbar-thumb { background: #252540; border-radius: 3px; }
+        .audio-btn:hover { transform: scale(1.05); }
+    </style>
+</head>
+<body class="text-gray-200 min-h-screen">
+    <div id="app" class="flex flex-col h-screen">
+        <!-- Header -->
+        <header class="bg-surface-100 border-b border-surface-300 px-6 py-3 flex items-center justify-between shrink-0">
+            <div class="flex items-center gap-3">
+                <div class="text-2xl">🔧</div>
+                <div>
+                    <h1 class="text-lg font-bold text-white">AgentOps</h1>
+                    <p class="text-xs text-gray-500">Self-Healing DevOps • Collaborative Incident Response</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-4">
+                <!-- Agent Status -->
+                <div id="agent-badge" class="flex items-center gap-2 bg-surface-200 px-3 py-1.5 rounded-full text-xs">
+                    <span id="agent-dot" class="w-2 h-2 rounded-full bg-ok pulse-dot"></span>
+                    <span id="agent-status-text">Agent Active</span>
+                </div>
+                <!-- Online Users -->
+                <div id="online-users" class="flex items-center gap-1"></div>
+                <!-- User Login -->
+                <div id="user-section" class="flex items-center gap-2">
+                    <input id="username-input" type="text" placeholder="Your name" 
+                           class="bg-surface-200 border border-surface-300 rounded px-3 py-1.5 text-sm w-32 focus:border-accent outline-none">
+                    <button onclick="joinSession()" class="bg-accent hover:bg-accent-dim px-3 py-1.5 rounded text-sm font-medium transition">Join</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Stats Bar -->
+        <div class="bg-surface-100 border-b border-surface-300 px-6 py-2 flex items-center gap-6 text-xs shrink-0">
+            <div class="flex items-center gap-2">
+                <span class="text-gray-500">Incidents:</span>
+                <span id="stat-total" class="font-semibold text-white">0</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-gray-500">Resolved:</span>
+                <span id="stat-resolved" class="font-semibold text-ok">0</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-gray-500">Auto-fixed:</span>
+                <span id="stat-auto" class="font-semibold text-accent-light">0</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-gray-500">Learning Records:</span>
+                <span id="stat-learning" class="font-semibold text-warn">0</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-gray-500">Avg Confidence:</span>
+                <span id="stat-confidence" class="font-semibold text-white">—</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-gray-500">Safety Checks:</span>
+                <span id="stat-safety" class="font-semibold text-ok">0/0</span>
+            </div>
+            <div class="ml-auto flex items-center gap-2">
+                <button onclick="showInjectModal()" class="bg-danger/20 text-danger hover:bg-danger/30 px-3 py-1 rounded text-xs font-medium transition">
+                    💥 Inject Fault
+                </button>
+                <button onclick="fetchVoiceSummary()" class="bg-accent/20 text-accent-light hover:bg-accent/30 px-3 py-1 rounded text-xs font-medium transition audio-btn">
+                    🔊 Voice Summary
+                </button>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="flex flex-1 overflow-hidden">
+            <!-- Left: Incident List -->
+            <div class="w-80 bg-surface-100 border-r border-surface-300 flex flex-col shrink-0">
+                <div class="p-3 border-b border-surface-300">
+                    <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Incidents</h2>
+                </div>
+                <div id="incident-list" class="flex-1 overflow-y-auto p-2 space-y-1">
+                    <div class="text-center text-gray-600 text-sm py-8">No incidents yet</div>
+                </div>
+            </div>
+
+            <!-- Center: Incident Detail -->
+            <div class="flex-1 flex flex-col overflow-hidden">
+                <div id="incident-detail" class="flex-1 overflow-y-auto p-6">
+                    <div class="flex flex-col items-center justify-center h-full text-gray-600">
+                        <div class="text-4xl mb-3">🛡️</div>
+                        <p class="text-lg">All Systems Monitored</p>
+                        <p class="text-sm mt-1">Select an incident or inject a fault to begin</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: Activity & Collaboration -->
+            <div class="w-80 bg-surface-100 border-l border-surface-300 flex flex-col shrink-0">
+                <div class="p-3 border-b border-surface-300 flex items-center justify-between">
+                    <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Activity</h2>
+                    <div id="viewers" class="flex items-center gap-1 text-xs text-gray-500"></div>
+                </div>
+                <div id="activity-feed" class="flex-1 overflow-y-auto p-2 space-y-1">
+                </div>
+                <!-- Comment Input -->
+                <div id="comment-section" class="p-3 border-t border-surface-300 hidden">
+                    <div class="flex gap-2">
+                        <input id="comment-input" type="text" placeholder="Add a comment..."
+                               class="flex-1 bg-surface-200 border border-surface-300 rounded px-3 py-2 text-sm focus:border-accent outline-none"
+                               onkeydown="if(event.key==='Enter')sendComment()">
+                        <button onclick="sendComment()" class="bg-accent hover:bg-accent-dim px-3 py-2 rounded text-sm transition">Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Inject Fault Modal -->
+    <div id="inject-modal" class="fixed inset-0 bg-black/60 hidden items-center justify-center z-50" onclick="if(event.target===this)hideInjectModal()">
+        <div class="bg-surface-100 border border-surface-300 rounded-xl p-6 w-96 glow">
+            <h3 class="text-lg font-bold mb-4">💥 Inject Fault</h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="text-xs text-gray-400 mb-1 block">Service</label>
+                    <select id="inject-service" class="w-full bg-surface-200 border border-surface-300 rounded px-3 py-2 text-sm outline-none">
+                        <option value="api">API</option>
+                        <option value="database">Database</option>
+                        <option value="auth">Auth</option>
+                        <option value="cache">Cache</option>
+                        <option value="worker">Worker</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-400 mb-1 block">Fault Type</label>
+                    <div class="grid grid-cols-1 gap-2">
+                        <button onclick="injectFault('crash')" class="bg-crit/20 text-crit hover:bg-crit/30 px-3 py-2 rounded text-sm text-left transition">
+                            💀 Crash — Process killed (OOMKilled)
+                        </button>
+                        <button onclick="injectFault('slow')" class="bg-warn/20 text-warn hover:bg-warn/30 px-3 py-2 rounded text-sm text-left transition">
+                            🐌 Slow — 5s response time, pool exhausted
+                        </button>
+                        <button onclick="injectFault('bad_config')" class="bg-danger/20 text-danger hover:bg-danger/30 px-3 py-2 rounded text-sm text-left transition">
+                            ⚙️ Bad Config — Invalid DATABASE_URL
+                        </button>
+                        <button onclick="injectFault('memory_leak')" class="bg-warn/20 text-warn hover:bg-warn/30 px-3 py-2 rounded text-sm text-left transition">
+                            📈 Memory Leak — 92% memory usage
+                        </button>
+                        <button onclick="injectFault('dependency_down')" class="bg-danger/20 text-danger hover:bg-danger/30 px-3 py-2 rounded text-sm text-left transition">
+                            🔗 Dependency Down — Upstream 503
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <button onclick="hideInjectModal()" class="mt-4 w-full bg-surface-200 hover:bg-surface-300 py-2 rounded text-sm transition">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Voice Audio Player (hidden) -->
+    <audio id="voice-player" class="hidden"></audio>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

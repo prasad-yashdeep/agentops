@@ -41,8 +41,31 @@
     </header>
 
     <main class="max-w-6xl mx-auto px-6 py-8">
-        <h1 class="text-2xl font-bold mb-2">🏪 Product Catalog</h1>
-        <p class="text-zinc-500 text-sm mb-8">Browse and order from our e-commerce API. Orders are placed in real-time on the live backend.</p>
+        <div class="flex items-center justify-between mb-2">
+            <div>
+                <h1 class="text-2xl font-bold">🏪 Product Catalog</h1>
+                <p class="text-zinc-500 text-sm mt-1">Browse and order from our e-commerce API. Orders are placed in real-time on the live backend.</p>
+            </div>
+            <button onclick="toggleSimulation()" id="sim-btn"
+                class="bg-purple-600 hover:bg-purple-500 px-5 py-2.5 rounded-xl font-semibold text-sm transition flex items-center gap-2 shrink-0">
+                ⚡ Simulate Live Traffic
+            </button>
+        </div>
+
+        <!-- Live Activity Feed (shown during simulation) -->
+        <div id="live-feed" class="hidden mb-6">
+            <div class="border border-purple-500/20 bg-purple-500/5 rounded-2xl p-4">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></div>
+                        <span class="text-xs font-semibold text-purple-400 uppercase tracking-wider">Live User Activity</span>
+                        <span id="sim-count" class="text-xs text-zinc-500 mono">0 actions</span>
+                    </div>
+                    <button onclick="toggleSimulation()" class="text-xs text-red-400 hover:text-red-300 transition">⏹ Stop</button>
+                </div>
+                <div id="activity-stream" class="space-y-1.5 max-h-48 overflow-y-auto"></div>
+            </div>
+        </div>
 
         <div id="products-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             <div class="bg-zinc-900 rounded-2xl p-4 h-48 animate-pulse"></div>
@@ -331,7 +354,155 @@
         } catch(e) {}
     }
 
-    // Init
+    // ─── Real-Time Simulation ─────────────────────────────────────
+    let simRunning = false;
+    let simTimer = null;
+    let simActionCount = 0;
+
+    const SIM_USERS = [
+        { id: 1, name: 'Alice Chen', emoji: '👩' },
+        { id: 2, name: 'Bob Smith', emoji: '👨' },
+        { id: 3, name: 'Carol Williams', emoji: '👩‍💼' },
+        { id: 5, name: 'Eva Martinez', emoji: '👩‍🔬' },
+        { id: 6, name: 'Frank Lee', emoji: '🧑' },
+        { id: 7, name: 'Grace Kim', emoji: '👧' },
+    ];
+
+    const SIM_ACTIONS = [
+        { type: 'browse', weight: 3, fn: simBrowse },
+        { type: 'add_cart', weight: 2, fn: simAddToCart },
+        { type: 'checkout', weight: 1, fn: simCheckout },
+        { type: 'view_product', weight: 2, fn: simViewProduct },
+        { type: 'search', weight: 1, fn: simSearch },
+    ];
+
+    function toggleSimulation() {
+        if (simRunning) {
+            stopSimulation();
+        } else {
+            startSimulation();
+        }
+    }
+
+    function startSimulation() {
+        simRunning = true;
+        simActionCount = 0;
+        document.getElementById('live-feed').classList.remove('hidden');
+        document.getElementById('sim-btn').innerHTML = '⏹ Stop Simulation';
+        document.getElementById('sim-btn').classList.remove('bg-purple-600', 'hover:bg-purple-500');
+        document.getElementById('sim-btn').classList.add('bg-red-600', 'hover:bg-red-500');
+        document.getElementById('activity-stream').innerHTML = '';
+        addSimActivity('🚀', 'system', 'Simulation started — generating live user traffic...');
+        runNextAction();
+    }
+
+    function stopSimulation() {
+        simRunning = false;
+        if (simTimer) clearTimeout(simTimer);
+        document.getElementById('sim-btn').innerHTML = '⚡ Simulate Live Traffic';
+        document.getElementById('sim-btn').classList.add('bg-purple-600', 'hover:bg-purple-500');
+        document.getElementById('sim-btn').classList.remove('bg-red-600', 'hover:bg-red-500');
+        addSimActivity('⏹', 'system', `Simulation stopped — ${simActionCount} actions performed`);
+    }
+
+    function runNextAction() {
+        if (!simRunning) return;
+        // Weighted random selection
+        const totalWeight = SIM_ACTIONS.reduce((s, a) => s + a.weight, 0);
+        let r = Math.random() * totalWeight;
+        let action = SIM_ACTIONS[0];
+        for (const a of SIM_ACTIONS) {
+            r -= a.weight;
+            if (r <= 0) { action = a; break; }
+        }
+        action.fn();
+        simActionCount++;
+        document.getElementById('sim-count').textContent = `${simActionCount} actions`;
+        // Next action in 1.5-4 seconds
+        const delay = 1500 + Math.random() * 2500;
+        simTimer = setTimeout(runNextAction, delay);
+    }
+
+    function randomUser() { return SIM_USERS[Math.floor(Math.random() * SIM_USERS.length)]; }
+    function randomProduct() { return products.length > 0 ? products[Math.floor(Math.random() * products.length)] : null; }
+
+    function simBrowse() {
+        const user = randomUser();
+        const cats = ['electronics', 'food', 'sports', 'home'];
+        const cat = cats[Math.floor(Math.random() * cats.length)];
+        addSimActivity(user.emoji, user.name, `Browsing ${cat} products...`);
+    }
+
+    function simViewProduct() {
+        const user = randomUser();
+        const p = randomProduct();
+        if (!p) return;
+        addSimActivity(user.emoji, user.name, `Viewing <strong>${p.name}</strong> — $${p.price.toFixed(2)} ⭐${p.rating}`);
+    }
+
+    function simSearch() {
+        const user = randomUser();
+        const queries = ['wireless headphones', 'yoga mat', 'coffee beans', 'keyboard rgb', 'running shoes', 'protein powder', 'usb hub', 'cast iron'];
+        const q = queries[Math.floor(Math.random() * queries.length)];
+        addSimActivity(user.emoji, user.name, `Searched for "<em>${q}</em>"`);
+    }
+
+    function simAddToCart() {
+        const user = randomUser();
+        const p = randomProduct();
+        if (!p) return;
+        const qty = Math.ceil(Math.random() * 3);
+        addSimActivity(user.emoji, user.name, `Added <strong>${qty}× ${p.name}</strong> to cart — $${(p.price * qty).toFixed(2)}`, 'text-blue-400');
+    }
+
+    async function simCheckout() {
+        const user = randomUser();
+        // Pick 1-3 random products
+        const numItems = Math.ceil(Math.random() * 3);
+        const items = [];
+        for (let i = 0; i < numItems; i++) {
+            const p = randomProduct();
+            if (p && p.stock > 0) {
+                items.push({ product_id: p.id, qty: 1 });
+            }
+        }
+        if (items.length === 0) return;
+
+        addSimActivity(user.emoji, user.name, `Checking out ${items.length} item(s)...`, 'text-amber-400');
+
+        // Actually place the order
+        const result = await postJSON('api/checkout', {
+            cart: items,
+            user_id: user.id,
+            payment_method: ['card', 'paypal', 'apple_pay'][Math.floor(Math.random() * 3)],
+        });
+
+        if (result.order_id) {
+            addSimActivity('✅', user.name, `<strong>Order #${result.order_id}</strong> placed — $${result.total?.toFixed(2)} via ${result.payment_method}`, 'text-green-400');
+            // Refresh data
+            setTimeout(() => { loadProducts(); loadOrders(); loadAnalytics(); }, 500);
+        } else {
+            addSimActivity('❌', user.name, `Checkout failed: ${result.error || 'Unknown error'}`, 'text-red-400');
+        }
+    }
+
+    function addSimActivity(icon, actor, detail, colorClass='') {
+        const stream = document.getElementById('activity-stream');
+        const el = document.createElement('div');
+        el.className = 'flex items-center gap-2 text-xs fade-in';
+        const time = new Date().toLocaleTimeString();
+        el.innerHTML = `
+            <span class="shrink-0">${icon}</span>
+            <span class="font-medium text-zinc-300 shrink-0">${actor}</span>
+            <span class="${colorClass || 'text-zinc-500'} flex-1 truncate">${detail}</span>
+            <span class="text-zinc-700 shrink-0 mono">${time}</span>
+        `;
+        stream.prepend(el);
+        // Keep max 30 entries
+        while (stream.children.length > 30) stream.lastChild.remove();
+    }
+
+    // ─── Init ───────────────────────────────────────────────────────
     loadProducts();
     loadOrders();
     loadAnalytics();

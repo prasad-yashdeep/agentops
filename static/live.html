@@ -369,9 +369,14 @@
 
     // ─── Init ───────────────────────────────────────────────────────
     loadAll();
+    // Auto-refresh all data every 5 seconds for real-time updates
     setInterval(async () => {
         const h = await fetchJSON('health');
         updateHealthDot(h);
+        fetchEndpoint('products');
+        fetchEndpoint('orders');
+        fetchEndpoint('analytics');
+        fetchEndpoint('users');
     }, 5000);
     </script>
 </body>

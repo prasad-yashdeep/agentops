@@ -136,15 +136,29 @@ class AgentOps:
             traceback_str = health.get("traceback", "")
             severity = self._assess_severity(health, fault_type)
 
+            # Map severity to bug_severity for approval rules
+            bug_sev_map = {"critical": "blocker", "high": "medium", "medium": "medium", "low": "low"}
+            bug_severity = bug_sev_map.get(severity, "medium")
+            # Specific fault types can override
+            if fault_type in ("crash", "bad_config"):
+                bug_severity = "blocker"  # data loss risk
+
+            # Build impact analysis
+            impact_analysis = self._build_impact_analysis(health, fault_type, severity)
+
             # Create incident with real error info
             incident = Incident(
                 id=gen_id(),
                 title=f"{'🔴' if severity == 'critical' else '🟡'} {error_detail[:80]}",
                 description=self._build_description(health, fault_type),
                 severity=severity,
+                bug_severity=bug_severity,
                 status="detected",
                 service_name="target-app",
                 error_logs=self._build_error_evidence(health, app_logs, traceback_str),
+                impact_analysis=impact_analysis,
+                reported_by="Agent (auto-detected)",
+                assigned_to="Agent",
             )
             db.add(incident)
             db.commit()
@@ -155,8 +169,12 @@ class AgentOps:
                                      f"Detected: {error_detail[:100]}")
             await manager.broadcast("incident_new", {
                 "id": incident.id, "title": incident.title, "severity": severity,
+                "bug_severity": bug_severity,
                 "status": "detected", "service_name": "target-app",
                 "detected_at": str(incident.detected_at),
+                "impact_analysis": impact_analysis,
+                "reported_by": "Agent (auto-detected)",
+                "assigned_to": "Agent",
             })
 
             # ── Diagnose ──
@@ -268,9 +286,15 @@ class AgentOps:
             if not incident:
                 return {"error": "Incident not found"}
 
+            # Look up user role
+            from db import User
+            user = db.query(User).filter(User.name == user_name).first()
+            user_role = user.role if user else None
+
             approval = Approval(
                 id=gen_id(), incident_id=incident_id,
-                user_name=user_name, action=action, comment=comment,
+                user_name=user_name, user_role=user_role,
+                action=action, comment=comment,
             )
             db.add(approval)
 
@@ -485,7 +509,7 @@ Respond in JSON:
                 ),
                 "category": "config",
                 "file_at_fault": "config.json",
-                "line_hint": "1",
+                "line_hint": "1-10",
             }
 
         elif fault_type == "bug":
@@ -553,7 +577,7 @@ Respond in JSON:
                 ),
                 "category": "performance",
                 "file_at_fault": "handler.py",
-                "line_hint": "54",
+                "line_hint": "54-70",
             }
 
         return {
@@ -790,6 +814,46 @@ Respond in JSON:
                                  f"📚 Decision '{decision}' saved — confidence will adjust for similar issues")
 
     # ─── Helpers ─────────────────────────────────────────────────
+
+    def _build_impact_analysis(self, health: Dict, fault_type: str, severity: str) -> str:
+        """Build a human-readable impact analysis for the incident."""
+        impacts = {
+            "crash": (
+                "🔴 CRITICAL IMPACT — Complete Service Outage\n\n"
+                "• All API endpoints are unreachable\n"
+                "• Customers cannot browse products, place orders, or check out\n"
+                "• Revenue loss: ~$50-200/min during peak hours\n"
+                "• Data risk: In-flight transactions may be lost\n"
+                "• Upstream services depending on this API will also fail\n"
+                "• Estimated blast radius: 100% of users"
+            ),
+            "bad_config": (
+                "🟠 HIGH IMPACT — Configuration Corruption\n\n"
+                "• Application crashes on startup due to invalid config\n"
+                "• Database connection string corrupted — potential data loss\n"
+                "• All API endpoints return HTTP 500 errors\n"
+                "• Security risk: Malformed config could expose debug info\n"
+                "• Estimated blast radius: 100% of users"
+            ),
+            "bug": (
+                "🟡 HIGH IMPACT — Code Defect in Business Logic\n\n"
+                "• Health validation fails — app reports unhealthy\n"
+                "• Undefined function calls cause NameError on every request\n"
+                "• Analytics endpoint broken (ZeroDivisionError)\n"
+                "• Products and orders may still work if not using validate()\n"
+                "• Estimated blast radius: 60-80% of API calls"
+            ),
+            "slow": (
+                "🟡 MEDIUM IMPACT — Performance Degradation\n\n"
+                "• All requests take 8-10 seconds instead of <100ms\n"
+                "• Health checks timeout — monitoring thinks app is down\n"
+                "• Users experience extreme latency, most will abandon\n"
+                "• No data loss but severe UX degradation\n"
+                "• Estimated blast radius: 100% of users (degraded, not blocked)"
+            ),
+        }
+        return impacts.get(fault_type,
+            f"⚪ UNKNOWN IMPACT\n\nSeverity: {severity}\nError: {health.get('error', 'Unknown')}")
 
     def _assess_severity(self, health: Dict, fault_type: str) -> str:
         if fault_type == "crash":

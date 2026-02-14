@@ -1,14 +1,49 @@
 """Pydantic schemas for API."""
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
+
+# ─── Auth ────────────────────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class UserOut(BaseModel):
+    id: str
+    name: str
+    email: str
+    role: str
+    role_display: str = ""
+    avatar_color: str = "#a855f7"
+    is_highest_authority: bool = False
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UserProfile(BaseModel):
+    id: str
+    name: str
+    email: str
+    role: str
+    role_display: str
+    avatar_color: str
+    is_highest_authority: bool
+    permissions: dict = {}
+
+
+# ─── Incidents ───────────────────────────────────────────────────────
 
 class IncidentOut(BaseModel):
     id: str
     title: str
     description: str
     severity: str
+    bug_severity: str = "medium"
     status: str
     detected_at: datetime
     resolved_at: Optional[datetime] = None
@@ -22,6 +57,12 @@ class IncidentOut(BaseModel):
     auto_resolved: bool
     error_logs: Optional[str] = None
     service_name: Optional[str] = None
+    reported_by: Optional[str] = None
+    assigned_to: Optional[str] = None
+    cleared_by: Optional[str] = None
+    cleared_at: Optional[datetime] = None
+    impact_analysis: Optional[str] = None
+    resolution_method: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -42,6 +83,7 @@ class ApprovalOut(BaseModel):
     id: str
     incident_id: str
     user_name: str
+    user_role: Optional[str] = None
     action: str
     comment: str
     created_at: datetime
@@ -54,6 +96,7 @@ class CommentOut(BaseModel):
     id: str
     incident_id: str
     user_name: str
+    user_role: Optional[str] = None
     content: str
     created_at: datetime
 
@@ -65,6 +108,7 @@ class ActivityOut(BaseModel):
     id: int
     incident_id: Optional[str] = None
     actor: str
+    actor_role: Optional[str] = None
     action: str
     detail: str
     created_at: datetime
@@ -73,9 +117,23 @@ class ActivityOut(BaseModel):
         from_attributes = True
 
 
+class NotificationOut(BaseModel):
+    id: str
+    incident_id: Optional[str] = None
+    title: str
+    message: str
+    type: str
+    read: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class FaultInject(BaseModel):
-    fault_type: str  # crash, slow, bad_config, memory_leak, dependency_down
+    fault_type: str
     service: Optional[str] = "api"
+    reported_by: Optional[str] = None
 
 
 class AgentStatus(BaseModel):

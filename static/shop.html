@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ShopAPI — E-Commerce Store</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>tailwind.config = { theme: { extend: { fontFamily: { sans: ['Inter'] } } } }</script>
+    <style>
+        body { background: #09090b; font-family: 'Inter', sans-serif; color: #fafafa; }
+        @keyframes fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        .fade-in { animation: fade-up 0.4s ease-out forwards; }
+        @keyframes cart-pop { 0% { transform: scale(1); } 50% { transform: scale(1.3); } 100% { transform: scale(1); } }
+        .cart-pop { animation: cart-pop 0.3s ease-out; }
+        ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 3px; }
+    </style>
+</head>
+<body class="min-h-screen">
+    <header class="border-b border-zinc-800/50 px-6 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <span class="text-xl">🛒</span>
+            <span class="font-bold text-lg">ShopAPI</span>
+            <span class="text-xs text-zinc-500 border border-zinc-800 rounded px-2 py-0.5">E-Commerce Store</span>
+        </div>
+        <div class="flex items-center gap-4">
+            <div class="flex items-center gap-2 text-xs">
+                <div class="relative">
+                    <div id="health-dot" class="w-2.5 h-2.5 rounded-full bg-zinc-600"></div>
+                </div>
+                <span id="health-text" class="text-zinc-500">Connecting...</span>
+            </div>
+            <div class="w-px h-4 bg-zinc-800"></div>
+            <button onclick="toggleCart()" class="relative text-xl" id="cart-btn">
+                🛒 <span id="cart-count" class="absolute -top-1 -right-2 bg-purple-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center hidden">0</span>
+            </button>
+            <div class="w-px h-4 bg-zinc-800"></div>
+            <a href="/" class="text-xs text-purple-400 hover:text-purple-300 transition">← Dashboard</a>
+            <a href="/live" class="text-xs text-zinc-500 hover:text-green-400 transition">API View</a>
+        </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto px-6 py-8">
+        <h1 class="text-2xl font-bold mb-2">🏪 Product Catalog</h1>
+        <p class="text-zinc-500 text-sm mb-8">Browse and order from our e-commerce API. Orders are placed in real-time on the live backend.</p>
+
+        <div id="products-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div class="bg-zinc-900 rounded-2xl p-4 h-48 animate-pulse"></div>
+            <div class="bg-zinc-900 rounded-2xl p-4 h-48 animate-pulse"></div>
+            <div class="bg-zinc-900 rounded-2xl p-4 h-48 animate-pulse"></div>
+            <div class="bg-zinc-900 rounded-2xl p-4 h-48 animate-pulse"></div>
+        </div>
+
+        <!-- Recent Orders -->
+        <div class="border border-zinc-800 rounded-2xl p-5 mb-8">
+            <h2 class="font-semibold mb-4">📦 Recent Orders</h2>
+            <div id="orders-list" class="space-y-2">
+                <div class="text-xs text-zinc-600">Loading orders...</div>
+            </div>
+        </div>
+
+        <!-- Analytics Summary -->
+        <div class="border border-zinc-800 rounded-2xl p-5">
+            <h2 class="font-semibold mb-4">📊 Live Analytics</h2>
+            <div id="analytics-grid" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="bg-zinc-900 rounded-xl p-3 h-20 animate-pulse"></div>
+                <div class="bg-zinc-900 rounded-xl p-3 h-20 animate-pulse"></div>
+                <div class="bg-zinc-900 rounded-xl p-3 h-20 animate-pulse"></div>
+                <div class="bg-zinc-900 rounded-xl p-3 h-20 animate-pulse"></div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Cart Sidebar -->
+    <div id="cart-panel" class="fixed top-0 right-0 h-full w-96 bg-zinc-900 border-l border-zinc-700 shadow-2xl z-50 transform translate-x-full transition-transform duration-300">
+        <div class="p-6 h-full flex flex-col">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="font-bold text-lg">🛒 Your Cart</h2>
+                <button onclick="toggleCart()" class="text-zinc-500 hover:text-white">✕</button>
+            </div>
+            <div id="cart-items" class="flex-1 overflow-y-auto space-y-3 mb-4">
+                <div class="text-center py-8 text-zinc-600">Cart is empty</div>
+            </div>
+            <div id="cart-summary" class="border-t border-zinc-800 pt-4 hidden">
+                <div class="space-y-1 text-sm mb-4">
+                    <div class="flex justify-between"><span class="text-zinc-500">Subtotal</span><span id="cart-subtotal" class="mono">$0.00</span></div>
+                    <div class="flex justify-between"><span class="text-zinc-500">Tax (8.875%)</span><span id="cart-tax" class="mono">$0.00</span></div>
+                    <div class="flex justify-between"><span class="text-zinc-500">Shipping</span><span class="mono">$5.99</span></div>
+                    <div class="flex justify-between font-bold text-lg mt-2"><span>Total</span><span id="cart-total" class="mono text-green-400">$0.00</span></div>
+                </div>
+                <button onclick="placeOrder()" id="checkout-btn" class="w-full bg-purple-600 hover:bg-purple-500 py-3 rounded-xl font-semibold transition flex items-center justify-center gap-2">
+                    Place Order 🚀
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Order Success Toast -->
+    <div id="order-toast" class="fixed bottom-6 right-6 bg-green-500/10 border border-green-500/20 text-green-400 px-6 py-4 rounded-2xl shadow-2xl hidden z-50 fade-in">
+        <div class="flex items-center gap-3">
+            <span class="text-2xl">✅</span>
+            <div>
+                <div class="font-semibold">Order Placed!</div>
+                <div id="toast-detail" class="text-xs text-green-400/70">Order #1005 — $129.99</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    let cart = [];
+    let products = [];
+    let cartOpen = false;
+
+    const categoryIcons = {
+        electronics: '💻', food: '☕', sports: '🏃', home: '🏠',
+        accessories: '🎧', wearables: '⌚', audio: '🔊'
+    };
+
+    async function fetchJSON(path) {
+        try { return await fetch(`/app/${path}`).then(r=>r.json()); }
+        catch(e) { return { error: e.message }; }
+    }
+
+    async function postJSON(path, body) {
+        try {
+            const r = await fetch(`/app/${path}`, {
+                method: 'POST', headers: {'Content-Type':'application/json'},
+                body: JSON.stringify(body),
+            });
+            return await r.json();
+        } catch(e) { return { error: e.message }; }
+    }
+
+    async function loadProducts() {
+        const data = await fetchJSON('api/products');
+        products = data.products || data || [];
+        if (!Array.isArray(products)) {
+            document.getElementById('products-grid').innerHTML = `<div class="col-span-4 bg-red-500/5 border border-red-500/20 rounded-xl p-6 text-center text-red-400">⚠️ App unreachable — ${data.error || 'try again'}</div>`;
+            return;
+        }
+        renderProducts();
+    }
+
+    function renderProducts() {
+        document.getElementById('products-grid').innerHTML = products.map((p, i) => {
+            const icon = categoryIcons[p.category] || '📦';
+            const inCart = cart.find(c => c.product_id === p.id);
+            return `
+                <div class="border border-zinc-800 rounded-2xl p-5 hover:border-zinc-700 transition fade-in" style="animation-delay:${i*0.05}s">
+                    <div class="text-3xl mb-3">${icon}</div>
+                    <h3 class="font-semibold text-sm mb-1">${p.name}</h3>
+                    <div class="text-xs text-zinc-500 mb-2">${p.category} · ${p.stock} in stock · ⭐ ${p.rating}</div>
+                    <div class="flex items-center justify-between mt-3">
+                        <span class="text-xl font-bold text-green-400">$${p.price.toFixed(2)}</span>
+                        ${p.stock > 0 ? `
+                            <button onclick="addToCart(${p.id})" class="bg-purple-600 hover:bg-purple-500 px-4 py-2 rounded-xl text-sm font-medium transition ${inCart ? 'bg-green-600 hover:bg-green-500' : ''}">
+                                ${inCart ? `✓ (${inCart.qty})` : 'Add to Cart'}
+                            </button>
+                        ` : '<span class="text-xs text-red-400">Out of stock</span>'}
+                    </div>
+                </div>`;
+        }).join('');
+    }
+
+    function addToCart(productId) {
+        const p = products.find(p => p.id === productId);
+        if (!p || p.stock <= 0) return;
+        const existing = cart.find(c => c.product_id === productId);
+        if (existing) {
+            if (existing.qty < p.stock) existing.qty++;
+        } else {
+            cart.push({ product_id: productId, qty: 1 });
+        }
+        updateCartUI();
+        renderProducts();
+        // Pop animation
+        document.getElementById('cart-btn').classList.add('cart-pop');
+        setTimeout(() => document.getElementById('cart-btn').classList.remove('cart-pop'), 300);
+    }
+
+    function removeFromCart(productId) {
+        cart = cart.filter(c => c.product_id !== productId);
+        updateCartUI();
+        renderProducts();
+    }
+
+    function updateCartUI() {
+        const countEl = document.getElementById('cart-count');
+        const totalItems = cart.reduce((s, c) => s + c.qty, 0);
+        if (totalItems > 0) {
+            countEl.textContent = totalItems;
+            countEl.classList.remove('hidden');
+        } else {
+            countEl.classList.add('hidden');
+        }
+
+        const itemsEl = document.getElementById('cart-items');
+        const summaryEl = document.getElementById('cart-summary');
+
+        if (cart.length === 0) {
+            itemsEl.innerHTML = '<div class="text-center py-8 text-zinc-600">Cart is empty</div>';
+            summaryEl.classList.add('hidden');
+            return;
+        }
+        summaryEl.classList.remove('hidden');
+
+        let subtotal = 0;
+        itemsEl.innerHTML = cart.map(c => {
+            const p = products.find(p => p.id === c.product_id);
+            if (!p) return '';
+            const lineTotal = p.price * c.qty;
+            subtotal += lineTotal;
+            return `
+                <div class="flex items-center gap-3 bg-zinc-800 rounded-xl px-3 py-2">
+                    <span>${categoryIcons[p.category] || '📦'}</span>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-sm truncate">${p.name}</div>
+                        <div class="text-xs text-zinc-500">$${p.price.toFixed(2)} × ${c.qty}</div>
+                    </div>
+                    <span class="text-sm font-bold text-green-400">$${lineTotal.toFixed(2)}</span>
+                    <button onclick="removeFromCart(${p.id})" class="text-zinc-600 hover:text-red-400 text-xs">✕</button>
+                </div>`;
+        }).join('');
+
+        const tax = subtotal * 0.08875;
+        const total = subtotal + tax + 5.99;
+        document.getElementById('cart-subtotal').textContent = `$${subtotal.toFixed(2)}`;
+        document.getElementById('cart-tax').textContent = `$${tax.toFixed(2)}`;
+        document.getElementById('cart-total').textContent = `$${total.toFixed(2)}`;
+    }
+
+    function toggleCart() {
+        cartOpen = !cartOpen;
+        document.getElementById('cart-panel').style.transform = cartOpen ? 'translateX(0)' : 'translateX(100%)';
+    }
+
+    async function placeOrder() {
+        if (cart.length === 0) return;
+        const btn = document.getElementById('checkout-btn');
+        btn.textContent = 'Processing...';
+        btn.disabled = true;
+
+        const result = await postJSON('api/checkout', {
+            cart: cart,
+            user_id: 1, // Default customer
+            payment_method: 'card',
+        });
+
+        btn.textContent = 'Place Order 🚀';
+        btn.disabled = false;
+
+        if (result.error && !result.order_id) {
+            alert('Order failed: ' + (result.error || 'Unknown error'));
+            return;
+        }
+
+        // Success!
+        const toast = document.getElementById('order-toast');
+        document.getElementById('toast-detail').textContent = `Order #${result.order_id} — $${result.total?.toFixed(2) || '?'}`;
+        toast.classList.remove('hidden');
+        setTimeout(() => toast.classList.add('hidden'), 5000);
+
+        cart = [];
+        updateCartUI();
+        toggleCart();
+        renderProducts();
+
+        // Refresh data
+        setTimeout(() => {
+            loadProducts();
+            loadOrders();
+            loadAnalytics();
+        }, 1000);
+    }
+
+    async function loadOrders() {
+        const data = await fetchJSON('api/orders');
+        const orders = data.orders || data || [];
+        if (!Array.isArray(orders)) {
+            document.getElementById('orders-list').innerHTML = `<div class="text-xs text-red-400">Error loading orders</div>`;
+            return;
+        }
+        document.getElementById('orders-list').innerHTML = orders.length > 0
+            ? orders.map(o => `
+                <div class="flex items-center gap-3 bg-zinc-900 rounded-lg px-4 py-2 fade-in">
+                    <span class="text-xs font-bold mono text-zinc-600">#${o.id}</span>
+                    <div class="flex-1">
+                        <span class="text-sm">${(o.items||[]).length} item${(o.items||[]).length!==1?'s':''}</span>
+                        <span class="text-xs text-zinc-500 ml-2">${o.date || ''}</span>
+                    </div>
+                    <span class="text-xs px-2 py-0.5 rounded-full ${o.status === 'delivered' ? 'bg-green-500/10 text-green-400' : o.status === 'shipped' ? 'bg-blue-500/10 text-blue-400' : 'bg-amber-500/10 text-amber-400'}">${o.status}</span>
+                    <span class="text-sm font-bold text-amber-400 mono">$${(o.total||0).toFixed(2)}</span>
+                </div>
+            `).join('')
+            : '<div class="text-xs text-zinc-600">No orders yet</div>';
+    }
+
+    async function loadAnalytics() {
+        const data = await fetchJSON('api/analytics');
+        const a = data.analytics || data;
+        if (typeof a !== 'object' || a.error) {
+            document.getElementById('analytics-grid').innerHTML = `<div class="col-span-4 text-xs text-red-400">Analytics unavailable</div>`;
+            return;
+        }
+        document.getElementById('analytics-grid').innerHTML = `
+            <div class="bg-zinc-900 rounded-xl p-3 text-center fade-in">
+                <div class="text-xl font-bold text-green-400">$${(a.total_revenue||0).toFixed(2)}</div>
+                <div class="text-xs text-zinc-500">Revenue</div>
+            </div>
+            <div class="bg-zinc-900 rounded-xl p-3 text-center fade-in">
+                <div class="text-xl font-bold text-blue-400">${a.total_orders||0}</div>
+                <div class="text-xs text-zinc-500">Orders</div>
+            </div>
+            <div class="bg-zinc-900 rounded-xl p-3 text-center fade-in">
+                <div class="text-xl font-bold text-purple-400">$${(a.avg_order_value||0).toFixed(2)}</div>
+                <div class="text-xs text-zinc-500">Avg Order</div>
+            </div>
+            <div class="bg-zinc-900 rounded-xl p-3 text-center fade-in">
+                <div class="text-xl font-bold text-amber-400">${a.active_users||0}</div>
+                <div class="text-xs text-zinc-500">Active Users</div>
+            </div>`;
+    }
+
+    async function checkHealth() {
+        try {
+            const h = await fetchJSON('health');
+            const ok = h.status === 'healthy' || h.healthy === true;
+            document.getElementById('health-dot').className = `w-2.5 h-2.5 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'}`;
+            document.getElementById('health-text').textContent = ok ? 'Store Online' : (h.error || 'Error');
+            document.getElementById('health-text').className = ok ? 'text-green-400' : 'text-red-400';
+        } catch(e) {}
+    }
+
+    // Init
+    loadProducts();
+    loadOrders();
+    loadAnalytics();
+    checkHealth();
+    setInterval(checkHealth, 5000);
+    setInterval(() => { loadOrders(); loadAnalytics(); }, 10000);
+    </script>
+</body>
+</html>

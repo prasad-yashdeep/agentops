@@ -27,131 +27,258 @@
         .glow-red { box-shadow: 0 0 30px rgba(239,68,68,0.2); }
         .glow-purple { box-shadow: 0 0 30px rgba(168,85,247,0.15); }
         ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 3px; }
+        .notif-badge { position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; }
     </style>
 </head>
 <body class="min-h-screen">
-    <!-- Top Bar -->
-    <header class="border-b border-zinc-800/50 px-6 py-3 flex items-center justify-between">
-        <div class="flex items-center gap-3">
-            <span class="text-xl">🔧</span>
-            <span class="font-bold text-lg">AgentOps</span>
-            <span class="text-xs text-zinc-500 border border-zinc-800 rounded px-2 py-0.5">Self-Healing DevOps</span>
-        </div>
-        <div class="flex items-center gap-4">
-            <!-- Live App Status -->
-            <div id="app-health" class="flex items-center gap-2 text-xs">
-                <div class="relative">
-                    <div id="health-dot" class="w-2.5 h-2.5 rounded-full bg-green-500"></div>
-                    <div id="health-ring" class="absolute inset-0 w-2.5 h-2.5 rounded-full bg-green-500 pulse-ring"></div>
-                </div>
-                <span id="health-text" class="text-zinc-400">App Healthy</span>
-            </div>
-            <div class="w-px h-4 bg-zinc-800"></div>
-            <!-- Agent Status -->
-            <div class="flex items-center gap-2 text-xs">
-                <div class="w-2 h-2 rounded-full bg-purple-500"></div>
-                <span class="text-zinc-400">Agent Monitoring</span>
-            </div>
-            <div class="w-px h-4 bg-zinc-800"></div>
-            <!-- Online Users -->
-            <div id="online-users" class="flex items-center gap-1"></div>
-            <!-- Join -->
-            <div id="join-section">
-                <div class="flex items-center gap-2">
-                    <input id="username-input" type="text" placeholder="Your name"
-                           class="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm w-28 focus:border-purple-500 outline-none"
-                           onkeydown="if(event.key==='Enter')joinSession()">
-                    <button onclick="joinSession()" class="bg-purple-600 hover:bg-purple-500 px-3 py-1.5 rounded-lg text-sm font-medium transition">Join</button>
-                </div>
-            </div>
-        </div>
-    </header>
 
-    <!-- Main Content -->
-    <main class="max-w-4xl mx-auto px-6 py-8">
-        <!-- Stats Row -->
-        <div class="flex items-center gap-6 mb-8 text-sm">
-            <div class="flex items-center gap-2">
-                <span class="text-zinc-500">Incidents</span>
-                <span id="stat-total" class="font-mono font-bold">0</span>
+    <!-- ═══ LOGIN PAGE ═══ -->
+    <div id="login-page" class="min-h-screen flex items-center justify-center">
+        <div class="w-full max-w-md px-6">
+            <div class="text-center mb-8">
+                <span class="text-5xl mb-4 block">🔧</span>
+                <h1 class="text-3xl font-bold mb-2">AgentOps</h1>
+                <p class="text-zinc-500">Self-Healing DevOps Platform</p>
             </div>
-            <div class="flex items-center gap-2">
-                <span class="text-zinc-500">Resolved</span>
-                <span id="stat-resolved" class="font-mono font-bold text-green-400">0</span>
-            </div>
-            <div class="flex items-center gap-2">
-                <span class="text-zinc-500">Auto-fixed</span>
-                <span id="stat-auto" class="font-mono font-bold text-purple-400">0</span>
-            </div>
-            <div class="flex items-center gap-2">
-                <span class="text-zinc-500">Learned</span>
-                <span id="stat-learning" class="font-mono font-bold text-amber-400">0</span>
-            </div>
-            <div class="ml-auto flex items-center gap-2">
-                <a href="/live" target="_blank" class="text-zinc-500 hover:text-green-400 text-xs transition flex items-center gap-1">
-                    🛒 Live App
-                </a>
-                <button onclick="fetchVoiceSummary()" class="text-zinc-500 hover:text-purple-400 text-xs transition flex items-center gap-1">
-                    🔊 Voice Summary
-                </button>
-                <button onclick="showInjectModal()" class="bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 px-4 py-1.5 rounded-lg text-sm font-medium transition">
-                    💥 Inject Fault
-                </button>
-            </div>
-        </div>
-
-        <!-- Empty State / Active Incident -->
-        <div id="main-content">
-            <div id="empty-state" class="flex flex-col items-center justify-center py-24">
-                <div class="relative mb-6">
-                    <div class="w-20 h-20 rounded-full bg-green-500/10 flex items-center justify-center glow-green">
-                        <span class="text-4xl">🛡️</span>
+            <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 glow-purple">
+                <h2 class="text-lg font-semibold mb-4">Sign In</h2>
+                <div class="space-y-4">
+                    <div>
+                        <label class="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Email</label>
+                        <input id="login-email" type="email" placeholder="you@nyu.edu"
+                               class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:border-purple-500 outline-none transition">
+                    </div>
+                    <div>
+                        <label class="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Password</label>
+                        <input id="login-password" type="password" placeholder="••••"
+                               class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:border-purple-500 outline-none transition"
+                               onkeydown="if(event.key==='Enter')doLogin()">
+                    </div>
+                    <div id="login-error" class="hidden text-red-400 text-xs"></div>
+                    <button onclick="doLogin()" class="w-full bg-purple-600 hover:bg-purple-500 py-3 rounded-xl font-semibold transition">
+                        Sign In
+                    </button>
+                </div>
+                <div class="mt-6 border-t border-zinc-800 pt-4">
+                    <p class="text-xs text-zinc-600 mb-3 text-center">Team Members</p>
+                    <div class="space-y-2">
+                        <button onclick="quickLogin('bds9746@nyu.edu')" class="w-full flex items-center gap-3 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-4 py-2.5 rounded-xl text-left transition">
+                            <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold" style="background:#22c55e">B</div>
+                            <div><div class="text-sm font-medium">Bhumika</div><div class="text-xs text-zinc-500">Junior Developer</div></div>
+                        </button>
+                        <button onclick="quickLogin('yp2693@nyu.edu')" class="w-full flex items-center gap-3 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-4 py-2.5 rounded-xl text-left transition">
+                            <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold" style="background:#3b82f6">Y</div>
+                            <div><div class="text-sm font-medium">Yash</div><div class="text-xs text-zinc-500">Senior Developer</div></div>
+                        </button>
+                        <button onclick="quickLogin('ss19623@nyu.edu')" class="w-full flex items-center gap-3 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-4 py-2.5 rounded-xl text-left transition">
+                            <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold" style="background:#a855f7">S</div>
+                            <div><div class="text-sm font-medium">Shweta</div><div class="text-xs text-zinc-500">Team Lead ⭐</div></div>
+                        </button>
                     </div>
                 </div>
-                <h2 class="text-2xl font-bold mb-2">All Systems Operational</h2>
-                <p class="text-zinc-500 text-sm">Agent is monitoring your app. Inject a fault to see it in action.</p>
-                <div id="env-info" class="mt-6 flex items-center gap-3 text-xs text-zinc-600">
-                    <span>📡 Health checks every 5s</span>
-                    <span>•</span>
-                    <span id="target-info">🎯 Connecting...</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ MAIN APP (hidden until login) ═══ -->
+    <div id="app-page" class="hidden">
+        <!-- Top Bar -->
+        <header class="border-b border-zinc-800/50 px-6 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <span class="text-xl">🔧</span>
+                <span class="font-bold text-lg">AgentOps</span>
+                <span class="text-xs text-zinc-500 border border-zinc-800 rounded px-2 py-0.5">Self-Healing DevOps</span>
+            </div>
+            <div class="flex items-center gap-4">
+                <!-- Live App Status -->
+                <div id="app-health" class="flex items-center gap-2 text-xs">
+                    <div class="relative">
+                        <div id="health-dot" class="w-2.5 h-2.5 rounded-full bg-green-500"></div>
+                        <div id="health-ring" class="absolute inset-0 w-2.5 h-2.5 rounded-full bg-green-500 pulse-ring"></div>
+                    </div>
+                    <span id="health-text" class="text-zinc-400">App Healthy</span>
+                </div>
+                <div class="w-px h-4 bg-zinc-800"></div>
+                <!-- Agent Status -->
+                <div class="flex items-center gap-2 text-xs">
+                    <div class="w-2 h-2 rounded-full bg-purple-500"></div>
+                    <span class="text-zinc-400">Agent Monitoring</span>
+                </div>
+                <div class="w-px h-4 bg-zinc-800"></div>
+                <!-- Online Users -->
+                <div id="online-users" class="flex items-center gap-1"></div>
+                <!-- Notifications Bell -->
+                <button onclick="toggleNotifications()" class="relative text-zinc-400 hover:text-white transition">
+                    🔔
+                    <span id="notif-count" class="notif-badge hidden bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">0</span>
+                </button>
+                <!-- User Profile -->
+                <div id="user-profile" class="flex items-center gap-2">
+                    <div id="user-avatar" class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold"></div>
+                    <div class="text-left">
+                        <div id="user-name" class="text-xs font-medium"></div>
+                        <div id="user-role" class="text-[10px] text-zinc-500"></div>
+                    </div>
+                    <button onclick="doLogout()" class="text-xs text-zinc-600 hover:text-red-400 ml-1 transition">⏏</button>
                 </div>
             </div>
+        </header>
 
-            <!-- Incident View (hidden until incident occurs) -->
-            <div id="incident-view" class="hidden">
-                <!-- Incident Header -->
-                <div id="inc-header" class="mb-6"></div>
+        <!-- Tab Navigation -->
+        <div class="border-b border-zinc-800/50 px-6">
+            <div class="flex gap-1">
+                <button onclick="showTab('incidents')" id="tab-incidents" class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-purple-500 text-white transition">🐛 Incidents</button>
+                <button onclick="showTab('analytics')" id="tab-analytics" class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-zinc-500 hover:text-white transition">📊 Analytics</button>
+                <button onclick="showTab('team')" id="tab-team" class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-zinc-500 hover:text-white transition">👥 Team</button>
+                <button onclick="showTab('reports')" id="tab-reports" class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-zinc-500 hover:text-white transition">📋 Reports</button>
+            </div>
+        </div>
 
-                <!-- Timeline Steps -->
-                <div id="timeline" class="space-y-4 mb-6"></div>
+        <!-- ═══ INCIDENTS TAB ═══ -->
+        <div id="page-incidents">
+            <main class="max-w-4xl mx-auto px-6 py-8">
+                <!-- Stats Row -->
+                <div class="flex items-center gap-6 mb-8 text-sm">
+                    <div class="flex items-center gap-2">
+                        <span class="text-zinc-500">Incidents</span>
+                        <span id="stat-total" class="font-mono font-bold">0</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-zinc-500">Resolved</span>
+                        <span id="stat-resolved" class="font-mono font-bold text-green-400">0</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-zinc-500">Auto-fixed</span>
+                        <span id="stat-auto" class="font-mono font-bold text-purple-400">0</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-zinc-500">Learned</span>
+                        <span id="stat-learning" class="font-mono font-bold text-amber-400">0</span>
+                    </div>
+                    <div class="ml-auto flex items-center gap-2">
+                        <a href="/live" target="_blank" class="text-zinc-500 hover:text-green-400 text-xs transition flex items-center gap-1">🛒 Live App</a>
+                        <a href="/shop" target="_blank" class="text-zinc-500 hover:text-blue-400 text-xs transition flex items-center gap-1">🏪 Shop</a>
+                        <button onclick="fetchVoiceSummary()" class="text-zinc-500 hover:text-purple-400 text-xs transition flex items-center gap-1">🔊 Voice</button>
+                        <button id="inject-btn" onclick="showInjectModal()" class="bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 px-4 py-1.5 rounded-lg text-sm font-medium transition">💥 Inject Fault</button>
+                    </div>
+                </div>
 
-                <!-- Action Buttons -->
-                <div id="action-buttons" class="hidden mb-6"></div>
+                <!-- Empty State / Active Incident -->
+                <div id="main-content">
+                    <div id="empty-state" class="flex flex-col items-center justify-center py-24">
+                        <div class="relative mb-6">
+                            <div class="w-20 h-20 rounded-full bg-green-500/10 flex items-center justify-center glow-green">
+                                <span class="text-4xl">🛡️</span>
+                            </div>
+                        </div>
+                        <h2 class="text-2xl font-bold mb-2">All Systems Operational</h2>
+                        <p class="text-zinc-500 text-sm">Agent is monitoring your app. Inject a fault to see it in action.</p>
+                        <div id="env-info" class="mt-6 flex items-center gap-3 text-xs text-zinc-600">
+                            <span>📡 Health checks every 5s</span>
+                            <span>•</span>
+                            <span id="target-info">🎯 Connecting...</span>
+                        </div>
+                    </div>
 
-                <!-- Comments -->
-                <div id="comments-section" class="hidden">
-                    <div class="border border-zinc-800 rounded-xl p-4">
-                        <h3 class="text-sm font-semibold text-zinc-400 mb-3">💬 Team Discussion</h3>
-                        <div id="comments-list" class="space-y-3 mb-3 max-h-48 overflow-y-auto"></div>
-                        <div class="flex gap-2">
-                            <input id="comment-input" type="text" placeholder="Add a comment..."
-                                   class="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:border-purple-500 outline-none"
-                                   onkeydown="if(event.key==='Enter')sendComment()">
-                            <button onclick="sendComment()" class="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-lg text-sm transition">Send</button>
+                    <!-- Incident View -->
+                    <div id="incident-view" class="hidden">
+                        <div id="inc-header" class="mb-6"></div>
+                        <div id="timeline" class="space-y-4 mb-6"></div>
+                        <div id="action-buttons" class="hidden mb-6"></div>
+                        <div id="comments-section" class="hidden">
+                            <div class="border border-zinc-800 rounded-xl p-4">
+                                <h3 class="text-sm font-semibold text-zinc-400 mb-3">💬 Team Discussion</h3>
+                                <div id="comments-list" class="space-y-3 mb-3 max-h-48 overflow-y-auto"></div>
+                                <div class="flex gap-2">
+                                    <input id="comment-input" type="text" placeholder="Add a comment..."
+                                           class="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:border-purple-500 outline-none"
+                                           onkeydown="if(event.key==='Enter')sendComment()">
+                                    <button onclick="sendComment()" class="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-lg text-sm transition">Send</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
+
+                <!-- Activity Log -->
+                <div class="mt-8 border-t border-zinc-800/50 pt-6">
+                    <h3 class="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3">Activity Log</h3>
+                    <div id="activity-feed" class="space-y-1 max-h-64 overflow-y-auto">
+                        <div class="text-xs text-zinc-700">Waiting for activity...</div>
+                    </div>
+                </div>
+            </main>
         </div>
 
-        <!-- Activity Log -->
-        <div class="mt-8 border-t border-zinc-800/50 pt-6">
-            <h3 class="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3">Activity Log</h3>
-            <div id="activity-feed" class="space-y-1 max-h-64 overflow-y-auto">
-                <div class="text-xs text-zinc-700">Waiting for activity...</div>
+        <!-- ═══ ANALYTICS TAB ═══ -->
+        <div id="page-analytics" class="hidden">
+            <main class="max-w-5xl mx-auto px-6 py-8">
+                <h2 class="text-xl font-bold mb-6">📊 Analytics Dashboard</h2>
+                <div id="analytics-content">
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8" id="analytics-summary"></div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="border border-zinc-800 rounded-2xl p-5">
+                            <h3 class="font-semibold mb-4">Bug Severity Breakdown</h3>
+                            <div id="severity-chart" class="space-y-3"></div>
+                        </div>
+                        <div class="border border-zinc-800 rounded-2xl p-5">
+                            <h3 class="font-semibold mb-4">Team Performance</h3>
+                            <div id="team-chart" class="space-y-3"></div>
+                        </div>
+                    </div>
+                    <div class="mt-6 border border-zinc-800 rounded-2xl p-5">
+                        <h3 class="font-semibold mb-4">Recent Clearances</h3>
+                        <div id="recent-clearances" class="space-y-2"></div>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <!-- ═══ TEAM TAB ═══ -->
+        <div id="page-team" class="hidden">
+            <main class="max-w-3xl mx-auto px-6 py-8">
+                <h2 class="text-xl font-bold mb-6">👥 Team Structure</h2>
+                <div id="team-list" class="space-y-4"></div>
+                <div class="mt-8 border border-zinc-800 rounded-2xl p-5">
+                    <h3 class="font-semibold mb-3">Role Permissions</h3>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex items-center justify-between bg-zinc-900 rounded-lg px-4 py-3">
+                            <span>🟢 Low Severity Bugs</span>
+                            <span class="text-zinc-400">Any role can approve</span>
+                        </div>
+                        <div class="flex items-center justify-between bg-zinc-900 rounded-lg px-4 py-3">
+                            <span>🟡 Medium Severity Bugs</span>
+                            <span class="text-zinc-400">Senior Developer+ can approve</span>
+                        </div>
+                        <div class="flex items-center justify-between bg-zinc-900 rounded-lg px-4 py-3">
+                            <span>🔴 Blocker Bugs (data loss / security)</span>
+                            <span class="text-zinc-400"><strong>Team Lead only</strong></span>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <!-- ═══ REPORTS TAB ═══ -->
+        <div id="page-reports" class="hidden">
+            <main class="max-w-4xl mx-auto px-6 py-8">
+                <h2 class="text-xl font-bold mb-6">📋 Clearance Reports</h2>
+                <p class="text-sm text-zinc-500 mb-4">Reports are auto-generated when any bug is cleared and sent to the Team Lead.</p>
+                <div id="reports-list" class="space-y-4"></div>
+            </main>
+        </div>
+
+        <!-- Notifications Panel -->
+        <div id="notif-panel" class="fixed top-14 right-4 w-96 max-h-[70vh] bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl z-50 hidden overflow-hidden">
+            <div class="p-4 border-b border-zinc-800 flex items-center justify-between">
+                <h3 class="font-semibold text-sm">🔔 Notifications</h3>
+                <button onclick="toggleNotifications()" class="text-zinc-500 hover:text-white text-xs">✕</button>
+            </div>
+            <div id="notif-list" class="overflow-y-auto max-h-[60vh] p-2 space-y-2">
+                <div class="text-xs text-zinc-600 text-center py-4">No notifications</div>
             </div>
         </div>
-    </main>
+    </div>
 
     <!-- Inject Modal -->
     <div id="inject-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center z-50" onclick="if(event.target===this)hideInjectModal()">
@@ -160,19 +287,31 @@
             <p class="text-xs text-zinc-500 mb-4">These modify actual source files and kill real processes inside the <span id="modal-env" class="text-purple-400">Blaxel sandbox</span>.</p>
             <div class="space-y-2">
                 <button onclick="injectFault('crash')" class="w-full bg-zinc-800 hover:bg-red-500/10 border border-zinc-700 hover:border-red-500/30 px-4 py-3 rounded-xl text-left transition group">
-                    <div class="font-semibold text-sm group-hover:text-red-400">💀 Kill Process</div>
+                    <div class="flex items-center justify-between">
+                        <div class="font-semibold text-sm group-hover:text-red-400">💀 Kill Process</div>
+                        <span class="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full">BLOCKER</span>
+                    </div>
                     <div class="text-xs text-zinc-500 mt-0.5">Kills the running app. Connection refused on health check.</div>
                 </button>
                 <button onclick="injectFault('bad_config')" class="w-full bg-zinc-800 hover:bg-orange-500/10 border border-zinc-700 hover:border-orange-500/30 px-4 py-3 rounded-xl text-left transition group">
-                    <div class="font-semibold text-sm group-hover:text-orange-400">⚙️ Corrupt Config</div>
+                    <div class="flex items-center justify-between">
+                        <div class="font-semibold text-sm group-hover:text-orange-400">⚙️ Corrupt Config</div>
+                        <span class="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full">BLOCKER</span>
+                    </div>
                     <div class="text-xs text-zinc-500 mt-0.5">Writes invalid JSON to config.json → HTTP 500.</div>
                 </button>
                 <button onclick="injectFault('bug')" class="w-full bg-zinc-800 hover:bg-amber-500/10 border border-zinc-700 hover:border-amber-500/30 px-4 py-3 rounded-xl text-left transition group">
-                    <div class="font-semibold text-sm group-hover:text-amber-400">🐛 Inject Code Bug</div>
+                    <div class="flex items-center justify-between">
+                        <div class="font-semibold text-sm group-hover:text-amber-400">🐛 Inject Code Bug</div>
+                        <span class="text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded-full">MEDIUM</span>
+                    </div>
                     <div class="text-xs text-zinc-500 mt-0.5">Replaces handler.py with a NameError bug.</div>
                 </button>
                 <button onclick="injectFault('slow')" class="w-full bg-zinc-800 hover:bg-yellow-500/10 border border-zinc-700 hover:border-yellow-500/30 px-4 py-3 rounded-xl text-left transition group">
-                    <div class="font-semibold text-sm group-hover:text-yellow-400">🐌 Inject Slowdown</div>
+                    <div class="flex items-center justify-between">
+                        <div class="font-semibold text-sm group-hover:text-yellow-400">🐌 Inject Slowdown</div>
+                        <span class="text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded-full">MEDIUM</span>
+                    </div>
                     <div class="text-xs text-zinc-500 mt-0.5">Adds time.sleep(8) → health check timeout.</div>
                 </button>
             </div>
@@ -181,6 +320,6 @@
     </div>
 
     <audio id="voice-player" class="hidden"></audio>
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=2"></script>
 </body>
 </html>

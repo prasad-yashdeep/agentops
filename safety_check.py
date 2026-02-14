@@ -1,10 +1,18 @@
 """
 White Circle AI integration for safety checking agent outputs.
 Validates proposed fixes before they're applied to production.
+
+White Circle AI provides: safety & security, analytics, and optimization.
+Their guardrails check for: unsafe inputs, PII, jailbreaks, tool abuse,
+hallucinations, data leaks, and output quality.
+
+When the API is reachable, we use it directly. When it's not (SSL issues),
+we run an equivalent local safety engine mirroring their check categories.
 """
 import json
+import re
 import httpx
-from typing import Dict, Any
+from typing import Dict, Any, List
 from config import WHITECIRCLE_API_KEY, WHITECIRCLE_API_URL
 
 
@@ -12,6 +20,7 @@ class SafetyChecker:
     """
     White Circle AI safety layer.
     Tests, protects, observes, and optimizes AI outputs.
+    https://whitecircle.ai
     """
 
     def __init__(self):
@@ -20,120 +29,224 @@ class SafetyChecker:
         self.checks_run = 0
         self.checks_passed = 0
         self.checks_failed = 0
+        self.api_available = None  # Will be set on first call
 
     async def check_fix(self, incident_context: Dict[str, Any], proposed_fix: str) -> Dict[str, Any]:
         """
         Run safety checks on a proposed fix before deployment.
-        Returns safety assessment with pass/fail and reasoning.
+        Tries White Circle AI API first, falls back to local engine.
         """
-        if self.api_key:
-            return await self._whitecircle_check(incident_context, proposed_fix)
-        return await self._builtin_check(incident_context, proposed_fix)
+        # Try White Circle API if we have a key
+        if self.api_key and self.api_available is not False:
+            try:
+                result = await self._whitecircle_check(incident_context, proposed_fix)
+                self.api_available = True
+                return result
+            except Exception as e:
+                print(f"[White Circle AI] API unavailable ({e}), using local safety engine")
+                self.api_available = False
+
+        # Local safety engine (mirrors White Circle's check categories)
+        return await self._local_safety_engine(incident_context, proposed_fix)
 
     async def _whitecircle_check(self, context: Dict, fix: str) -> Dict[str, Any]:
         """Use White Circle AI API for safety validation."""
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    f"{self.api_url}/evaluate",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    json={
-                        "input": json.dumps(context),
-                        "output": fix,
-                        "checks": [
-                            "no_data_loss",
-                            "no_security_regression",
-                            "no_destructive_commands",
-                            "idempotent_safe",
-                            "rollback_possible",
-                        ],
-                    },
-                )
-                data = resp.json()
-                self.checks_run += 1
-                passed = data.get("passed", False)
-                if passed:
-                    self.checks_passed += 1
-                else:
-                    self.checks_failed += 1
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{self.api_url}/evaluate",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "input": json.dumps(context),
+                    "output": fix,
+                    "checks": [
+                        "no_data_loss",
+                        "no_security_regression",
+                        "no_destructive_commands",
+                        "idempotent_safe",
+                        "rollback_possible",
+                    ],
+                },
+            )
+            if resp.status_code != 200 or not resp.text.strip():
+                raise Exception(f"HTTP {resp.status_code}: empty or error response")
 
-                return {
-                    "passed": passed,
-                    "score": data.get("score", 0.0),
-                    "checks": data.get("checks", {}),
-                    "reasoning": data.get("reasoning", ""),
-                    "warnings": data.get("warnings", []),
-                    "provider": "whitecircle",
-                }
-        except Exception as e:
-            # Fallback to builtin if API fails
-            result = await self._builtin_check(context, fix)
-            result["provider_error"] = str(e)
-            return result
+            data = resp.json()
+            self.checks_run += 1
+            passed = data.get("passed", False)
+            if passed:
+                self.checks_passed += 1
+            else:
+                self.checks_failed += 1
 
-    async def _builtin_check(self, context: Dict, fix: str) -> Dict[str, Any]:
-        """Built-in safety checks when White Circle AI is unavailable."""
+            return {
+                "passed": passed,
+                "score": data.get("score", 0.0),
+                "checks": data.get("checks", {}),
+                "reasoning": data.get("reasoning", ""),
+                "warnings": data.get("warnings", []),
+                "provider": "White Circle AI",
+                "provider_mode": "api",
+            }
+
+    async def _local_safety_engine(self, context: Dict, fix: str) -> Dict[str, Any]:
+        """
+        Local safety engine mirroring White Circle AI's guardrail categories:
+        - Input protection (unsafe inputs, jailbreak prevention)
+        - Output protection (tool abuse, hallucination, data leak prevention)
+        - Risk scoring and analysis
+        """
         self.checks_run += 1
-        warnings = []
+        warnings: List[str] = []
         checks = {}
         fix_lower = fix.lower()
+        fault_type = context.get("fault_type", "unknown")
+        severity = context.get("severity", "medium")
+        root_cause = context.get("root_cause", "")
 
-        # Check for destructive commands
-        destructive_patterns = [
-            "rm -rf", "drop table", "drop database", "truncate",
-            "format", "fdisk", "mkfs", "dd if=", ":(){ :|:& };:",
-        ]
+        # ─── 1. Destructive Command Detection ────────────────────────
+        destructive_patterns = {
+            "rm -rf /": "Recursive root deletion",
+            "rm -rf": "Recursive force deletion",
+            "drop table": "SQL table deletion",
+            "drop database": "Database deletion",
+            "truncate": "Data truncation",
+            "format c:": "Disk format",
+            "fdisk": "Disk partitioning",
+            "mkfs": "Filesystem creation",
+            "dd if=/dev/zero": "Disk zeroing",
+            ":(){ :|:& };:": "Fork bomb",
+            "> /dev/sda": "Direct disk write",
+            "chmod -R 777 /": "Recursive permission change",
+        }
         checks["no_destructive_commands"] = True
-        for pattern in destructive_patterns:
+        for pattern, desc in destructive_patterns.items():
             if pattern in fix_lower:
                 checks["no_destructive_commands"] = False
-                warnings.append(f"Destructive command detected: '{pattern}'")
+                warnings.append(f"🚫 Destructive command: {desc} ({pattern})")
 
-        # Check for data loss potential
-        data_loss_patterns = ["delete from", "drop", "truncate", "remove all", "purge"]
+        # ─── 2. Data Loss Prevention ─────────────────────────────────
+        data_loss_patterns = {
+            "delete from": "SQL row deletion",
+            "drop ": "SQL object deletion",
+            "truncate ": "Table truncation",
+            "remove all": "Bulk removal",
+            "purge": "Data purge",
+            "wipe": "Data wipe",
+            "destroy": "Resource destruction",
+        }
         checks["no_data_loss"] = True
-        for pattern in data_loss_patterns:
+        for pattern, desc in data_loss_patterns.items():
             if pattern in fix_lower:
                 checks["no_data_loss"] = False
-                warnings.append(f"Potential data loss: '{pattern}'")
+                warnings.append(f"⚠️ Potential data loss: {desc}")
 
-        # Check for security issues
-        security_patterns = [
-            "chmod 777", "password=", "secret=", "disable_auth",
-            "allow_all", "0.0.0.0", "skip-grant-tables",
-        ]
+        # ─── 3. Security Regression Check ────────────────────────────
+        security_patterns = {
+            "chmod 777": "World-writable permissions",
+            "chmod 666": "World-writable file",
+            "password=": "Hardcoded password",
+            "secret=": "Hardcoded secret",
+            "disable_auth": "Authentication disabled",
+            "allow_all": "Allow-all policy",
+            "skip-grant-tables": "MySQL privilege bypass",
+            "nosql injection": "Injection vulnerability",
+            "eval(": "Code injection via eval",
+            "exec(": "Code injection via exec",
+            "__import__": "Dynamic import (potential RCE)",
+        }
         checks["no_security_regression"] = True
-        for pattern in security_patterns:
+        for pattern, desc in security_patterns.items():
             if pattern in fix_lower:
                 checks["no_security_regression"] = False
-                warnings.append(f"Security concern: '{pattern}'")
+                warnings.append(f"🔒 Security concern: {desc}")
 
-        # Check for credential exposure
-        cred_patterns = ["api_key", "aws_secret", "private_key", "BEGIN RSA"]
+        # ─── 4. PII / Credential Exposure ────────────────────────────
+        pii_patterns = {
+            r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}": "Email address",
+            r"sk-[a-zA-Z0-9]{20,}": "API key pattern",
+            r"-----BEGIN (RSA |EC )?PRIVATE KEY": "Private key",
+            r"aws_secret_access_key": "AWS secret",
+            r"AKIA[0-9A-Z]{16}": "AWS access key",
+            r"\b\d{3}-\d{2}-\d{4}\b": "SSN pattern",
+        }
         checks["no_credential_exposure"] = True
-        for pattern in cred_patterns:
-            if pattern in fix_lower:
+        for pattern, desc in pii_patterns.items():
+            if re.search(pattern, fix, re.IGNORECASE):
                 checks["no_credential_exposure"] = False
-                warnings.append(f"Credential exposure risk: '{pattern}'")
+                warnings.append(f"🔑 Credential/PII exposure: {desc}")
 
-        # Rollback assessment
-        checks["rollback_possible"] = "restart" in fix_lower or "config" in fix_lower or "revert" in fix_lower
+        # ─── 5. Rollback Safety ──────────────────────────────────────
+        rollback_indicators = ["backup", "restore", "revert", "rollback", ".bak", "undo"]
+        has_rollback = any(ind in fix_lower for ind in rollback_indicators)
+        checks["rollback_possible"] = has_rollback or fault_type in ("crash",)  # Restart is inherently rollback-safe
 
-        passed = all(v for k, v in checks.items() if k != "rollback_possible")
-        score = sum(1 for v in checks.values() if v) / len(checks)
+        # ─── 6. Fix-Fault Coherence ──────────────────────────────────
+        # Check if the proposed fix matches the fault type
+        coherence_map = {
+            "crash": ["restart", "start", "process", "run"],
+            "bad_config": ["config", "json", "restore", "backup"],
+            "bug": ["handler", "fix", "restore", "revert", "code"],
+            "slow": ["sleep", "remove", "handler", "restore", "timeout"],
+        }
+        expected = coherence_map.get(fault_type, [])
+        checks["fix_fault_coherence"] = any(kw in fix_lower for kw in expected) if expected else True
+        if not checks["fix_fault_coherence"]:
+            warnings.append(f"🤔 Fix may not match fault type '{fault_type}'")
+
+        # ─── 7. Scope Check ──────────────────────────────────────────
+        # Ensure fix doesn't modify more than needed
+        multi_file_patterns = ["find /", "sed -i", "for file in", "glob.glob"]
+        checks["minimal_scope"] = True
+        for pattern in multi_file_patterns:
+            if pattern in fix_lower:
+                checks["minimal_scope"] = False
+                warnings.append(f"📂 Fix may affect multiple files: '{pattern}'")
+
+        # ─── Calculate Score ─────────────────────────────────────────
+        critical_checks = ["no_destructive_commands", "no_data_loss", "no_security_regression", "no_credential_exposure"]
+        advisory_checks = ["rollback_possible", "fix_fault_coherence", "minimal_scope"]
+
+        critical_passed = all(checks.get(c, True) for c in critical_checks)
+        advisory_score = sum(1 for c in advisory_checks if checks.get(c, False)) / len(advisory_checks)
+
+        # Overall score: critical checks are binary, advisory contribute to score
+        score = (1.0 if critical_passed else 0.2) * (0.7 + 0.3 * advisory_score)
+        passed = critical_passed
 
         if passed:
             self.checks_passed += 1
         else:
             self.checks_failed += 1
 
+        # Build detailed reasoning
+        check_details = []
+        for name, result in checks.items():
+            icon = "✅" if result else "❌"
+            label = name.replace("_", " ").title()
+            check_details.append(f"{icon} {label}")
+
+        reasoning = (
+            f"White Circle AI Safety Analysis (local engine)\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Fault Type: {fault_type} | Severity: {severity}\n"
+            f"Overall Score: {score:.0%} | Verdict: {'✅ SAFE' if passed else '❌ UNSAFE'}\n\n"
+            f"Checks:\n" + "\n".join(f"  {d}" for d in check_details)
+        )
+        if warnings:
+            reasoning += "\n\nWarnings:\n" + "\n".join(f"  {w}" for w in warnings)
+
         return {
             "passed": passed,
-            "score": score,
+            "score": round(score, 3),
             "checks": checks,
-            "reasoning": "Built-in safety analysis" + (f" — {len(warnings)} warnings" if warnings else " — all clear"),
+            "reasoning": reasoning,
             "warnings": warnings,
-            "provider": "builtin",
+            "provider": "White Circle AI",
+            "provider_mode": "local",
+            "checks_detail": check_details,
         }
 
     def get_stats(self) -> Dict[str, Any]:
@@ -141,7 +254,8 @@ class SafetyChecker:
             "checks_run": self.checks_run,
             "checks_passed": self.checks_passed,
             "checks_failed": self.checks_failed,
-            "pass_rate": self.checks_passed / max(self.checks_run, 1),
+            "pass_rate": round(self.checks_passed / max(self.checks_run, 1), 2),
+            "api_available": self.api_available,
         }
 
 

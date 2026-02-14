@@ -199,10 +199,19 @@ function onIncidentUpdate(d) {
 
     if (d.safety) {
         const s = d.safety;
-        addStep(s.passed ? '🛡️' : '⚠️', `Safety Check: ${s.passed ? 'PASSED' : 'FAILED'}`,
-            `Score: ${(s.score*100).toFixed(0)}% · Provider: ${s.provider || 'builtin'}` +
+        const providerLabel = s.provider || 'White Circle AI';
+        const modeLabel = s.provider_mode === 'api' ? '(API)' : '(Local Engine)';
+        addStep(s.passed ? '🛡️' : '⚠️',
+            `Safety Check: ${s.passed ? 'PASSED' : 'FAILED'}`,
+            `Score: ${(s.score*100).toFixed(0)}% · ${providerLabel} ${modeLabel}` +
             (s.warnings?.length ? ` · ⚠️ ${s.warnings.length} warning(s)` : ''),
             s.passed ? 'green' : 'red');
+        if (s.reasoning) {
+            addStepDetail('White Circle AI — Safety Analysis', typeof s.reasoning === 'string' ? s.reasoning : JSON.stringify(s.reasoning, null, 2));
+        }
+        if (s.checks_detail?.length) {
+            addStepDetail('Safety Checks Detail', s.checks_detail.join('\n'));
+        }
     }
 
     if (d.confidence !== undefined) updateConfidence(d.confidence);

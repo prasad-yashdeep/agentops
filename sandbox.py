@@ -5,7 +5,7 @@ Uses Blaxel SDK for persistent cloud sandboxes, with local subprocess fallback.
 import asyncio
 import os
 from typing import Dict, Any
-from config import BLAXEL_API_KEY, USE_LOCAL_SANDBOX
+from config import BLAXEL_API_KEY, BLAXEL_WORKSPACE, USE_LOCAL_SANDBOX
 
 
 class SandboxResult:
@@ -39,12 +39,13 @@ class BlaxelSandbox:
         try:
             # Set auth env vars for Blaxel SDK
             os.environ["BL_API_KEY"] = BLAXEL_API_KEY
+            if BLAXEL_WORKSPACE:
+                os.environ["BL_WORKSPACE"] = BLAXEL_WORKSPACE
 
             from blaxel.core.sandbox import SandboxInstance
 
             self.sandbox_instance = await SandboxInstance.create_if_not_exists({
                 "name": self.sandbox_name,
-                "image": "default",
             })
             print(f"[AgentOps] Blaxel sandbox ready: {self.sandbox_name}")
             return self.sandbox_name

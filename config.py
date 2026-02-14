@@ -16,6 +16,7 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
 # Blaxel Sandbox
 BLAXEL_API_KEY = os.getenv("BLAXEL_API_KEY", "")
 BLAXEL_API_URL = os.getenv("BLAXEL_API_URL", "https://api.blaxel.ai/v1")
+BLAXEL_WORKSPACE = os.getenv("BLAXEL_WORKSPACE", os.getenv("BL_WORKSPACE", ""))
 USE_LOCAL_SANDBOX = os.getenv("USE_LOCAL_SANDBOX", "true").lower() == "true"
 
 # White Circle AI

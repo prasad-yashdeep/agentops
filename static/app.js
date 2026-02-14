@@ -471,5 +471,22 @@ async function fetchVoiceSummary() {
     } catch(e) { console.error(e); }
 }
 
-// Auto-refresh
+// Auto-refresh stats + check for incidents
 setInterval(refreshStats, 10000);
+setInterval(async () => {
+    if (!currentUser) return;
+    try {
+        const incs = await fetch('/api/incidents').then(r=>r.json());
+        const active = incs.find(i => !['resolved','rejected'].includes(i.status));
+        if (active && (!currentIncident || currentIncident.id !== active.id)) {
+            // New incident appeared — show it
+            currentIncident = active;
+            timelineSteps = [];
+            document.getElementById('timeline').innerHTML = '';
+            showIncident(active);
+        } else if (active && currentIncident && currentIncident.id === active.id && currentIncident.status !== active.status) {
+            // Same incident, status changed
+            onIncidentUpdate(active);
+        }
+    } catch(e) {}
+}, 3000);

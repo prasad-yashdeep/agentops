@@ -108,11 +108,18 @@ function onIncidentUpdate(d) {
 
     if (d.status === 'diagnosing' && d.root_cause) {
         addStep('🔍', 'Root Cause Found', d.root_cause, 'amber');
+        if (d.explanation) {
+            addExplanation(d.explanation);
+        }
         if (d.reasoning) {
             addStepDetail('Agent reasoning', typeof d.reasoning === 'string' ? d.reasoning : JSON.stringify(d.reasoning, null, 2));
         }
     } else if (d.status === 'diagnosing') {
         addStep('🧠', 'Diagnosing...', 'Analyzing error logs and source code', 'purple', true);
+    }
+
+    if (d.line_hint) {
+        currentIncident.line_hint = d.line_hint;
     }
 
     if (d.proposed_fix) {
@@ -183,15 +190,26 @@ function showIncident(inc) {
         <div id="confidence-bar" class="hidden mt-3"></div>
     `;
 
+    // Parse agent_reasoning for explanation, file_at_fault, line_hint
+    let diagData = {};
+    if (inc.agent_reasoning) {
+        try { diagData = JSON.parse(inc.agent_reasoning); } catch(e) {}
+    }
+    if (diagData.line_hint) inc.line_hint = diagData.line_hint;
+    if (diagData.file_at_fault) inc.file_at_fault = diagData.file_at_fault;
+
     // If incident has existing data, rebuild timeline
     if (inc.root_cause) {
         addStep('🚨', 'Detected', inc.title || 'Anomaly detected', 'red');
         addStep('🔍', 'Root Cause Found', inc.root_cause, 'amber');
+        if (diagData.explanation) {
+            addExplanation(diagData.explanation);
+        }
     }
     if (inc.proposed_fix) {
         addStep('🔧', 'Fix Generated', inc.proposed_fix, 'blue');
         // Infer file from fix diff or root cause
-        let fileGuess = inc.file_at_fault;
+        let fileGuess = inc.file_at_fault || diagData.file_at_fault;
         if (!fileGuess && inc.fix_diff) {
             if (inc.fix_diff.includes('handler.py')) fileGuess = 'handler.py';
             else if (inc.fix_diff.includes('config.json')) fileGuess = 'config.json';
@@ -253,6 +271,23 @@ function addStepDetail(title, content) {
     requestAnimationFrame(() => div.classList.remove('opacity-0'));
 }
 
+function addExplanation(text) {
+    const timeline = document.getElementById('timeline');
+    const div = document.createElement('div');
+    div.className = 'step-enter opacity-0 ml-11';
+    div.innerHTML = `
+        <div class="mt-2 p-4 rounded-xl border border-amber-500/20 bg-amber-500/5">
+            <div class="flex items-center gap-2 mb-2">
+                <span class="text-sm">📖</span>
+                <span class="text-xs font-semibold text-amber-400 uppercase tracking-wide">What happened (in plain English)</span>
+            </div>
+            <p class="text-sm text-zinc-300 leading-relaxed">${text}</p>
+        </div>
+    `;
+    timeline.appendChild(div);
+    requestAnimationFrame(() => div.classList.remove('opacity-0'));
+}
+
 function addStepCode(code, fileAtFault) {
     const timeline = document.getElementById('timeline');
     const div = document.createElement('div');
@@ -260,15 +295,17 @@ function addStepCode(code, fileAtFault) {
 
     const ghBase = 'https://github.com/prasad-yashdeep/agentops';
     const filePath = fileAtFault ? `target_app/${fileAtFault}` : null;
-    const ghLink = filePath ? `${ghBase}/blob/main/${filePath}` : ghBase;
-    const ghLabel = filePath || 'Repository';
+    const lineNum = currentIncident?.line_hint;
+    const lineAnchor = (lineNum && /^\d+$/.test(lineNum)) ? `#L${lineNum}` : '';
+    const ghLink = filePath ? `${ghBase}/blob/main/${filePath}${lineAnchor}` : ghBase;
+    const ghLabel = filePath ? `${filePath}${lineAnchor ? ` (line ${lineNum})` : ''}` : 'Repository';
 
     div.innerHTML = `
         <div class="flex items-center justify-between mb-1">
             <span class="text-xs text-zinc-600 mono">${fileAtFault ? `📄 ${fileAtFault}` : ''}</span>
             <a href="${ghLink}" target="_blank" class="flex items-center gap-1 text-xs text-purple-400 hover:text-purple-300 transition bg-purple-500/5 border border-purple-500/20 px-2.5 py-1 rounded-lg">
                 <svg class="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-                View on GitHub
+                ${ghLabel !== 'Repository' ? `View ${ghLabel}` : 'View on GitHub'}
             </a>
         </div>
         <pre class="text-xs mono bg-zinc-900 border border-zinc-800 rounded-lg p-3 whitespace-pre-wrap overflow-x-auto max-h-56 leading-relaxed">${highlightDiff(code)}</pre>

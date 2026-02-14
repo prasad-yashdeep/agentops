@@ -175,7 +175,10 @@ class AgentOps:
             await manager.broadcast("incident_update", {
                 "id": incident.id, "status": "diagnosing",
                 "root_cause": incident.root_cause,
+                "explanation": diagnosis.get("explanation", ""),
                 "reasoning": diagnosis.get("reasoning", ""),
+                "file_at_fault": diagnosis.get("file_at_fault"),
+                "line_hint": diagnosis.get("line_hint"),
             })
 
             # ── Generate Fix ──
@@ -223,6 +226,7 @@ class AgentOps:
                     "proposed_fix": incident.proposed_fix, "fix_diff": incident.fix_diff,
                     "safety": safety_result, "auto": True,
                     "file_at_fault": diagnosis.get("file_at_fault"),
+                    "line_hint": diagnosis.get("line_hint"),
                 })
                 await asyncio.sleep(1)
                 await self._apply_fix(incident, fault_type, db)
@@ -249,7 +253,9 @@ class AgentOps:
                     "confidence": confidence, "proposed_fix": incident.proposed_fix,
                     "fix_diff": incident.fix_diff, "safety": safety_result,
                     "root_cause": incident.root_cause,
+                    "explanation": diagnosis.get("explanation", ""),
                     "file_at_fault": diagnosis.get("file_at_fault"),
+                    "line_hint": diagnosis.get("line_hint"),
                 })
         finally:
             db.close()
@@ -438,6 +444,14 @@ Respond in JSON:
         if fault_type == "crash":
             return {
                 "root_cause": "Application process is not running — it was killed or crashed. No response on health endpoint.",
+                "explanation": (
+                    "Think of this like a restaurant's kitchen suddenly shutting down. "
+                    "The e-commerce API server — the program that handles all customer requests like viewing products, "
+                    "placing orders, and checking out — has completely stopped running. When our monitoring tried to "
+                    "ask the server 'are you okay?' (a health check), nobody answered. This means no customers can "
+                    "browse products, add items to cart, or complete purchases right now. "
+                    "The fix is straightforward: restart the server process, similar to rebooting a crashed computer."
+                ),
                 "reasoning": (
                     f"1. Health check returned: {error}\n"
                     f"2. Error type: {error_type}\n"
@@ -446,13 +460,23 @@ Respond in JSON:
                 ),
                 "category": "crash",
                 "file_at_fault": None,
-                "line_hint": "Process-level failure",
+                "line_hint": None,
             }
 
         elif fault_type == "bad_config":
             detail = health.get("detail", "")
             return {
                 "root_cause": f"config.json contains invalid JSON — parser error: {detail or error}",
+                "explanation": (
+                    "The application's configuration file (config.json) has been corrupted with invalid data. "
+                    "Think of config.json like a settings sheet that tells the app where the database lives, "
+                    "how many users it can handle, and other critical parameters. Someone (or something) changed "
+                    f"a value in this file to something the computer can't understand — specifically: {detail or error}. "
+                    "It's like writing 'INVALID_NOT_QUOTED' where a proper web address should be. "
+                    "When the server tried to read these settings on startup, it crashed because it couldn't "
+                    "make sense of the broken file. The fix: restore the config file from a known-good backup "
+                    "so all the settings are valid again, then restart the app."
+                ),
                 "reasoning": (
                     f"1. Health endpoint returned 500 with ConfigParseError\n"
                     f"2. Detail: {detail}\n"
@@ -461,7 +485,7 @@ Respond in JSON:
                 ),
                 "category": "config",
                 "file_at_fault": "config.json",
-                "line_hint": "JSON syntax error",
+                "line_hint": "1",
             }
 
         elif fault_type == "bug":
@@ -469,12 +493,30 @@ Respond in JSON:
             tb_lines = traceback_str.strip().split("\n") if traceback_str else []
             error_line = tb_lines[-1] if tb_lines else error
             file_line = ""
+            line_num = None
             for l in tb_lines:
                 if "handler.py" in l:
                     file_line = l.strip()
+                    # Extract line number from traceback like 'File "handler.py", line 42'
+                    import re
+                    m = re.search(r'line (\d+)', l)
+                    if m:
+                        line_num = m.group(1)
 
             return {
                 "root_cause": f"Code bug in handler.py — {error_line}. A developer referenced a function that doesn't exist in the codebase.",
+                "explanation": (
+                    f"A developer pushed a bad code change to handler.py (the file that handles all API requests). "
+                    f"Specifically, they replaced a simple database check with a call to a function called "
+                    f"'verify_database_connection()' — but that function was never written. It doesn't exist anywhere "
+                    f"in the codebase. So every time a customer tries to use the API, Python crashes with a "
+                    f"NameError saying 'verify_database_connection is not defined'."
+                    f"{(' The error happens at ' + file_line + '.') if file_line else ''} "
+                    f"On top of that, there's a second bug: the analytics function tries to divide revenue by "
+                    f"(total_orders - total_orders), which is always zero — causing a ZeroDivisionError. "
+                    f"The fix: revert handler.py to the last working version where validate() uses simple "
+                    f"config checks instead of calling a non-existent function, and fix the analytics math."
+                ),
                 "reasoning": (
                     f"1. Health endpoint returned HTTP 500 with {error_type}\n"
                     f"2. Error: {error}\n"
@@ -486,25 +528,40 @@ Respond in JSON:
                 ),
                 "category": "bug",
                 "file_at_fault": "handler.py",
-                "line_hint": file_line or error_line,
+                "line_hint": line_num or file_line or error_line,
             }
 
         elif fault_type == "slow":
             return {
-                "root_cause": "Health check timed out (>5s) — handler.py contains blocking time.sleep() calls",
+                "root_cause": "Health check timed out (>5s) — handler.py contains blocking time.sleep() calls injected at line 54",
+                "explanation": (
+                    "The application has become extremely slow — every single request now takes 8+ seconds "
+                    "instead of the normal milliseconds. Here's what happened: someone injected 'time.sleep(10)' "
+                    "into handler.py at line 54. This is a Python command that literally tells the program "
+                    "'stop and do nothing for 10 seconds.' It's like a restaurant waiter who pauses for 10 seconds "
+                    "before taking each order — the kitchen (server) works fine, but every customer (request) "
+                    "has to wait forever. Our health monitoring has a 5-second timeout, so when it asked "
+                    "'are you healthy?', the app was still sleeping and never answered in time. "
+                    "The fix: remove the time.sleep() calls from handler.py and restart the server "
+                    "(restarting is necessary because Python caches the old, buggy code in memory)."
+                ),
                 "reasoning": (
                     f"1. Health check timed out after 5 seconds\n"
-                    f"2. Looking at handler.py: found time.sleep() calls\n"
+                    f"2. Looking at handler.py: found time.sleep() calls at line 54\n"
                     f"3. These blocking calls are in the request path\n"
-                    f"4. Fix: remove time.sleep() calls or replace with async"
+                    f"4. Fix: remove time.sleep() calls and restart process (Python caches modules in memory)"
                 ),
                 "category": "performance",
                 "file_at_fault": "handler.py",
-                "line_hint": "time.sleep() calls",
+                "line_hint": "54",
             }
 
         return {
             "root_cause": f"Application error: {error}",
+            "explanation": (
+                f"The application encountered an unexpected error: {error}. "
+                "The agent is still analyzing the root cause. A manual review may be needed."
+            ),
             "reasoning": f"Error type: {error_type}, Details: {error}",
             "category": "unknown",
             "file_at_fault": None,

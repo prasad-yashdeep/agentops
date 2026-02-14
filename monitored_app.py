@@ -286,12 +286,20 @@ class MonitoredApp:
     async def apply_fix(self, fault_type: str) -> Dict[str, Any]:
         if fault_type == "crash":
             if self.mode == "blaxel":
+                # Kill any remnant process first
+                try:
+                    await self.sandbox.process.kill("ecommerce-api")
+                except:
+                    pass
+                await asyncio.sleep(1)
+                # Start fresh
                 await self.sandbox.process.exec({
                     "name": "ecommerce-api",
                     "command": f"cd {BL_APP_DIR} && python3 server.py {BL_APP_PORT}",
                     "wait_for_completion": False,
                 })
-                await asyncio.sleep(2)
+                await asyncio.sleep(3)
+                print("[AgentOps] Crash fix: restarted ecommerce-api in sandbox")
             else:
                 await self.restart()
             self.active_fault = None

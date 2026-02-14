@@ -368,17 +368,34 @@ class AgentOps:
     async def _apply_fix(self, incident: Incident, fault_type: str, db):
         """Apply the REAL fix — restore files and restart the app."""
         try:
-            result = await app_instance.apply_fix(fault_type)
+            await self._log_activity(incident.id, "agent", "deploying",
+                                     f"Applying fix for {fault_type}...")
 
-            # Restart the app process for faults that modify code (module cache)
-            if fault_type in ("crash", "slow", "bug", "bad_config"):
+            # Step 1: Restore files / restart process
+            result = await app_instance.apply_fix(fault_type)
+            await self._log_activity(incident.id, "agent", "fix_applied",
+                                     f"Fix applied: {json.dumps(result)}")
+
+            # Step 2: For non-crash faults, restart to clear Python module cache
+            # For crash: apply_fix already started the process — do NOT restart again
+            if fault_type != "crash":
                 await app_instance.restart()
 
-            # Verify the fix worked
-            await asyncio.sleep(2)
-            health = await app_instance.health_check()
+            # Step 3: Wait for app to come up
+            await asyncio.sleep(3)
 
-            if health.get("healthy"):
+            # Step 4: Verify with retries (Blaxel sandbox can be slow)
+            health = None
+            for attempt in range(4):
+                health = await app_instance.health_check()
+                if health.get("healthy"):
+                    break
+                if attempt < 3:
+                    await self._log_activity(incident.id, "agent", "verify_retry",
+                                             f"Verify attempt {attempt+1}: not healthy yet, waiting...")
+                    await asyncio.sleep(3)
+
+            if health and health.get("healthy"):
                 incident.status = "resolved"
                 incident.resolved_at = utcnow()
                 incident.auto_resolved = incident.confidence_score >= AUTO_FIX_THRESHOLD
@@ -390,21 +407,28 @@ class AgentOps:
                     self.auto_resolved += 1
 
                 await self._log_activity(incident.id, "agent", "resolved",
-                                         f"✅ Fix deployed and verified — app is healthy. {json.dumps(result)}")
+                                         f"✅ Fix deployed and verified — app is healthy")
                 await manager.broadcast("incident_update", {
                     "id": incident.id, "status": "resolved",
                     "auto_resolved": incident.auto_resolved,
                     "resolved_at": str(incident.resolved_at),
                 })
             else:
+                error_msg = health.get('error', 'unknown') if health else 'no response'
                 incident.status = "fix_proposed"
                 db.commit()
                 await self._log_activity(incident.id, "agent", "deploy_failed",
-                                         f"Fix applied but app still unhealthy: {health.get('error', 'unknown')}")
+                                         f"Fix applied but still unhealthy after 4 attempts: {error_msg}")
+                await manager.broadcast("incident_update", {
+                    "id": incident.id, "status": "fix_proposed",
+                })
         except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
             incident.status = "fix_proposed"
             db.commit()
-            await self._log_activity(incident.id, "agent", "deploy_failed", str(e))
+            await self._log_activity(incident.id, "agent", "deploy_failed",
+                                     f"Exception: {str(e)}\n{tb}")
 
     # ─── Diagnosis ───────────────────────────────────────────────
 

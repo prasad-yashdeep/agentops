@@ -234,7 +234,11 @@ class AgentOps:
             db.commit()
 
             # ── Decision ──
-            if confidence >= AUTO_FIX_THRESHOLD and safety_result.get("passed") and sandbox_result.get("test_passed"):
+            # BLOCKER bugs always need team lead approval (crash/config = data-loss risk)
+            is_blocker = incident.bug_severity == "blocker"
+            can_auto_fix = confidence >= AUTO_FIX_THRESHOLD and safety_result.get("passed") and not is_blocker
+            print(f"[AgentOps] Decision: conf={confidence:.2f} safety={safety_result.get('passed')} blocker={is_blocker} sev={incident.bug_severity} → auto={can_auto_fix}")
+            if can_auto_fix:
                 incident.status = "deploying"
                 db.commit()
                 await self._log_activity(incident.id, "agent", "auto_deploying",
@@ -795,6 +799,8 @@ Respond in JSON:
             score += 0.1
         if diagnosis.get("file_at_fault"):
             score += 0.05
+        if diagnosis.get("line_hint"):
+            score += 0.05
         if sandbox_result.get("test_passed"):
             score += 0.15
         if sandbox_result.get("fix_applied"):
@@ -804,6 +810,10 @@ Respond in JSON:
         score += safety_result.get("score", 0) * 0.1
         severity_penalty = {"low": 0, "medium": -0.05, "high": -0.1, "critical": -0.15}
         score += severity_penalty.get(severity, 0)
+
+        # Claude LLM reasoning boost — higher trust than rule-based fallback
+        if not diagnosis.get("_llm_error") and diagnosis.get("reasoning"):
+            score += 0.15  # Claude diagnosed → more trustworthy
 
         # Learning boost
         db = SessionLocal()

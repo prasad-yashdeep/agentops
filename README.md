@@ -1,213 +1,237 @@
-# 🔧 AgentOps — Self-Healing DevOps with Collaborative Human-in-the-Loop
+# 🔧 AgentOps — Self-Healing DevOps Agent
 
-> **DevOps incidents shouldn't be solo. Our agent does the heavy lifting, your team makes the calls — together.**
+> **AI-powered incident detection, diagnosis, and auto-fix with collaborative human-in-the-loop.**
 
-An AI agent that monitors your services in real-time, diagnoses failures, proposes fixes, tests them in isolated sandboxes, validates safety, and lets your engineering team collaborate on the response — all from a shared war room dashboard.
+AgentOps monitors a live production e-commerce application, detects failures in real time, uses Claude AI to diagnose root causes and generate fixes, validates safety through White Circle AI, and auto-deploys fixes when confidence is high — or escalates to the team for approval when the risk is too great.
+
+Built in 5 hours at the **Iterate x CBS AI Club Hackathon** at Columbia Business School.
 
 ![Track 1: Build an Agent](https://img.shields.io/badge/Track_1-Build_an_Agent-6c5ce7?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi)
 
+---
+
+## 🎯 The Problem
+
+Production incidents are stressful, time-consuming, and often happen at the worst times. Engineers scramble to diagnose issues, worry about making things worse with a fix, and lack visibility into what's happening across the team. Traditional monitoring tools alert you — but they don't *fix* anything.
+
+## 💡 Our Solution
+
+AgentOps is a **self-healing DevOps agent** that:
+1. **Detects** failures via continuous health monitoring (every 5s)
+2. **Diagnoses** root causes using Claude AI with full traceback analysis
+3. **Generates** targeted fixes with code diffs
+4. **Validates** fix safety through White Circle AI guardrails
+5. **Auto-deploys** when confidence > 85% and severity is non-critical
+6. **Escalates** to the team with role-based approval for critical/blocker issues
+7. **Learns** from human decisions to improve future confidence scoring
+
+All of this happens on a **real running application** — not a simulation.
+
+---
+
 ## 🏗️ Architecture
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                  MONITORED SERVICES                   │
-│         api • database • auth • cache • worker        │
-└──────────────┬───────────────────────────────────────┘
-               │ health checks every 5s
-               ▼
-┌──────────────────────────────────────────────────────┐
-│               🤖 AGENT CORE (Claude)                  │
-│                                                       │
-│  detect → diagnose → generate fix → test → decide     │
-└──────┬───────────┬──────────────┬────────────────────┘
-       │           │              │
-       ▼           ▼              ▼
-┌──────────┐ ┌──────────┐ ┌──────────────────┐
-│  BLAXEL  │ │  WHITE   │ │   CONFIDENCE     │
-│ SANDBOX  │ │ CIRCLE   │ │   SCORING +      │
-│          │ │ AI       │ │   LEARNING       │
-│ Isolated │ │ Safety   │ │                  │
-│ fix      │ │ check    │ │ >85% → auto-fix  │
-│ testing  │ │ before   │ │ 50-85% → review  │
-│          │ │ deploy   │ │ <50% → escalate  │
-└──────────┘ └──────────┘ └────────┬─────────┘
-                                   │
-                                   ▼
-┌──────────────────────────────────────────────────────┐
-│            👥 COLLABORATIVE DASHBOARD                 │
-│                                                       │
-│  [Dev 1]        [Dev 2]        [Dev 3]               │
-│  ✅ Approve     💬 Comment     ✏️ Override             │
-│                                                       │
-│  Real-time WebSocket • Live presence • Activity feed  │
-└──────────────────────────────────────────────────────┘
-               │
-               ▼
-┌──────────────────────────────────────────────────────┐
-│           🔊 ELEVENLABS VOICE ALERTS                  │
-│    Critical incidents → spoken alerts to engineers     │
-└──────────────────────────────────────────────────────┘
+┌─────────────────┐     ┌──────────────────┐     ┌───────────────┐
+│  E-Commerce App  │────▶│  AgentOps Server  │────▶│   Claude AI   │
+│  (Blaxel Sandbox)│     │  (FastAPI + WS)   │     │  (Diagnosis)  │
+│  Port 3000       │     │  Port 8000        │     │               │
+└─────────────────┘     └────────┬───────────┘     └───────┬───────┘
+                                 │                          │
+                    ┌────────────▼──────────┐    ┌─────────▼────────┐
+                    │  WebSocket Dashboard  │    │  White Circle AI  │
+                    │  Real-time updates    │    │  Safety Validation│
+                    │  Role-based auth      │    │  Policy Engine    │
+                    └───────────────────────┘    └──────────────────┘
+                                 │
+                    ┌────────────▼──────────┐
+                    │    ElevenLabs TTS     │
+                    │    Voice Alerts       │
+                    └───────────────────────┘
 ```
 
-## ⚡ Quick Start
+### Confidence-Based Escalation
+| Confidence | Severity | Action |
+|---|---|---|
+| **≥ 85%** | Medium/Low | 🤖 **Auto-fix** — deployed without human approval |
+| **≥ 85%** | Blocker | 🔒 **Team Lead approval required** — too risky for auto |
+| **50-85%** | Any | 👥 **Human review** — team decides |
+| **< 50%** | Any | ⚠️ **Escalate** — needs expert investigation |
 
+---
+
+## 🛠️ Sponsor Integrations
+
+### 🧊 Blaxel — Sandboxed Runtime
+- Target e-commerce app runs inside a **Blaxel persistent sandbox** (`agentops-ecom`)
+- All file operations (read/write handler.py, config.json) go through Blaxel SDK
+- Process management (start/stop/kill) via Blaxel process API
+- Isolated code testing sandbox (`agentops-sandbox`) for validating fixes before deployment
+
+### 🧠 Anthropic Claude — AI Reasoning
+- **Root cause diagnosis**: Analyzes health check errors, tracebacks, and source code
+- **Fix generation**: Produces targeted code diffs with file + line identification
+- **Confidence scoring**: Claude-diagnosed issues get a trust boost (+15%) over rule-based fallback
+- Model: `claude-sonnet-4-20250514` with structured JSON output
+- Graceful fallback: Rich rule-based engine works when API is unavailable
+
+### 🛡️ White Circle AI — Safety Validation
+- Every proposed fix passes through White Circle's guardrail API before deployment
+- Endpoint: `POST /api/session/check` with deployment-specific policies
+- Custom policy: **AgentOps Safety Guard** — flags destructive commands, credential exposure, data loss, security regressions
+- Allows: process restarts, file restores from backup, config rollbacks
+- Double verification enabled for production safety
+
+### 🔊 ElevenLabs — Voice Alerts
+- Critical/high severity incidents trigger voice alerts via ElevenLabs TTS
+- Model: `eleven_flash_v2_5` for low-latency alerts
+- Audio delivered via WebSocket to all connected dashboard users
+- Alert script includes: incident title, severity, root cause summary, proposed fix
+
+---
+
+## 🎮 Features
+
+### Real Fault Injection (Not Simulated!)
+| Fault Type | What It Does | Severity |
+|---|---|---|
+| **Crash** | Kills the app process (OOM simulation) | 🔴 BLOCKER |
+| **Bad Config** | Corrupts config.json with invalid JSON | 🔴 BLOCKER |
+| **Bug** | Injects NameError in handler.py validate() | 🟡 MEDIUM |
+| **Slow** | Adds time.sleep(10) to handler.py | 🟡 MEDIUM |
+
+### Role-Based Team Authentication
+| Role | User | Can Approve |
+|---|---|---|
+| **Team Lead** ⭐ | Shweta | All bugs (including BLOCKER) |
+| **Senior Dev** ⚡ | Yash | Medium + Low severity |
+| **Junior Dev** 🚀 | Bhumika | Low severity only |
+
+### Dashboard Tabs
+- **Incidents**: Real-time incident timeline with detection → diagnosis → fix → deploy flow
+- **Analytics**: Resolution rate, auto-fix rate, avg resolution time, severity breakdown
+- **Team**: Member profiles, role badges, permissions matrix
+- **Reports**: Clearance reports (auto-generated on bug resolution, sent to team lead)
+
+### Additional Features
+- **GitHub Deep Links**: Every fix links to the exact file and line in the repo
+- **Human-Readable Explanations**: Plain English explanations with analogies for non-technical stakeholders
+- **Impact Analysis**: Automated blast radius assessment for each fault type
+- **Notification System**: Bell badge with unread count, clearance reports auto-sent to team lead
+- **Learning System**: Records human approve/reject decisions to adjust future confidence
+- **E-Commerce Shop**: Full storefront with cart, checkout, live analytics
+- **Live API Viewer**: Real-time view of all API endpoints with auto-refresh
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Python 3.10+
+- Blaxel account + API key
+- Anthropic API key (optional — rule-based fallback works without it)
+- White Circle AI API key + deployment ID
+- ElevenLabs API key (optional — for voice alerts)
+
+### Setup
 ```bash
-# 1. Clone
-git clone https://github.com/yashdeepPrasad/agentops.git
+# Clone
+git clone https://github.com/prasad-yashdeep/agentops.git
 cd agentops
 
-# 2. Setup
+# Virtual environment
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# 3. Configure
+# Configure
 cp .env.example .env
-# Edit .env with your API keys (see Configuration below)
+# Edit .env with your API keys
 
-# 4. Run
-python main.py
+# Run
+python3 main.py
 ```
 
-Open **http://localhost:8000** — that's your war room.
+### Environment Variables
+```env
+# Blaxel — Sandboxed Runtime
+BL_API_KEY=your_blaxel_key
+BL_WORKSPACE=your_workspace
 
-## 🔑 Configuration
+# Anthropic — AI Reasoning
+ANTHROPIC_API_KEY=sk-ant-api03-...
 
-| Key | Required? | What it does |
-|-----|-----------|-------------|
-| `ANTHROPIC_API_KEY` | **Optional** | Claude-powered diagnosis & fix generation. Without it, a rich rule-based engine handles everything. Add it to unlock LLM reasoning. |
-| `BLAXEL_API_KEY` | **Optional** | Persistent cloud sandboxes for isolated fix testing (resume in <25ms). Falls back to local subprocess. |
-| `WHITECIRCLE_API_KEY` | **Optional** | AI safety validation of proposed fixes. Falls back to built-in safety checks (destructive commands, data loss, security, credentials). |
-| `ELEVENLABS_API_KEY` | **Optional** | Voice alerts for critical incidents. Skips if not set. |
+# White Circle AI — Safety Validation
+WHITECIRCLE_API_KEY=wc-...
+WHITECIRCLE_API_URL=https://us.whitecircle.ai/api
+WHITECIRCLE_DEPLOYMENT_ID=your_deployment_id
 
-**Everything works with zero API keys** — the built-in engines are production-quality. Each API key unlocks additional capabilities.
-
-### Adding Anthropic (Claude)
-
-To enable AI-powered diagnosis and fix generation:
-
-```bash
-# In your .env file:
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-CLAUDE_MODEL=claude-sonnet-4-20250514  # or claude-3-haiku for faster responses
+# ElevenLabs — Voice Alerts
+ELEVENLABS_API_KEY=sk_...
+ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
 ```
 
-The agent will automatically use Claude for root cause analysis and fix generation when the key is present, and fall back to the rule-based engine if the API is unreachable.
+### Access
+- **Dashboard**: http://localhost:8000
+- **Live App**: http://localhost:8000/live
+- **Shop**: http://localhost:8000/shop
+- **Team Logins**: Bhumika / Yash / Shweta (password: `1234`)
 
-## 🎮 Demo Flow
-
-1. **Open the dashboard** at `http://localhost:8000`
-2. **Enter your name** to join the war room
-3. **Click 💥 Inject Fault** to simulate a failure:
-   - 💀 **Crash** — OOMKilled process (exit code 137)
-   - 🐌 **Slow** — 5s response time, connection pool exhaustion
-   - ⚙️ **Bad Config** — Invalid DATABASE_URL
-   - 📈 **Memory Leak** — 92% memory, GC thrashing
-   - 🔗 **Dependency Down** — Upstream 503
-4. **Watch the agent** detect → diagnose → propose fix in real-time
-5. **Collaborate** with your team:
-   - ✅ **Approve** — deploy the fix
-   - ❌ **Reject** — with reason
-   - ✏️ **Override** — substitute your own fix
-   - 💬 **Request Changes** — agent incorporates your feedback
-   - 💬 **Comment** — discuss with teammates
-6. **🔊 Voice Summary** — hear an ElevenLabs status report
-7. **Inject multiple faults** across different services to see the agent handle concurrent incidents
-
-### Multi-User Demo
-Open the dashboard on **multiple devices/browsers** — each person enters a different name. Everyone sees the same incidents, approvals, and comments in real-time. Live presence shows who's online and what they're viewing.
-
-## 🧠 How It Works
-
-### Confidence-Based Escalation
-
-The agent doesn't just auto-fix everything — it knows when to ask for help:
-
-| Confidence | Action | Why |
-|-----------|--------|-----|
-| **>85%** + safety passed + tests passed | 🚀 Auto-deploys | High confidence, safe, verified |
-| **50-85%** | 🔧 Proposes fix, waits for approval | Medium confidence, needs human judgment |
-| **<50%** | ⚠️ Escalates with voice alert | Low confidence, needs expert review |
-
-### Learning System
-
-Every human decision (approve/reject/override) is recorded. Over time, the agent:
-- **Boosts confidence** for fix patterns that humans consistently approve
-- **Lowers confidence** for patterns that get rejected
-- Effectively learns your team's preferences and risk tolerance
-
-### Safety Pipeline (White Circle AI)
-
-Before any fix is deployed, it passes through safety checks:
-- ✅ No destructive commands (`rm -rf`, `DROP TABLE`, etc.)
-- ✅ No data loss potential
-- ✅ No security regressions (`chmod 777`, credential exposure)
-- ✅ No credential leaks in fix code
-- ✅ Rollback possibility assessment
-
-## 🏆 Sponsor Stack
-
-| Sponsor | Integration | Role |
-|---------|------------|------|
-| **Blaxel** (YCX25) | `blaxel` Python SDK | Persistent cloud sandboxes — agent spins up isolated VMs to reproduce bugs and test fixes. Resume from standby in <25ms. |
-| **Anthropic** | Claude API | AI reasoning engine — root cause analysis, fix generation, feedback incorporation |
-| **White Circle AI** | Safety API + built-in | Control layer that validates agent outputs before deployment — catches dangerous fixes |
-| **ElevenLabs** | TTS API | Voice alerts for critical incidents — engineers hear what's happening without looking at a screen |
-
-## 📡 API Reference
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Dashboard UI |
-| `/api/incidents` | GET | List incidents (filter: `?status=detected`) |
-| `/api/incidents/:id` | GET | Incident detail |
-| `/api/incidents/:id/approve` | POST | Approve/reject/override a fix |
-| `/api/incidents/:id/comments` | POST | Add a comment |
-| `/api/incidents/:id/comments` | GET | List comments |
-| `/api/incidents/:id/approvals` | GET | Approval history |
-| `/api/activity` | GET | Activity feed (filter: `?incident_id=...`) |
-| `/api/inject` | POST | Inject fault: `{"fault_type": "crash", "service": "api"}` |
-| `/api/health` | GET | All services health status |
-| `/api/services` | GET | List monitored services |
-| `/api/agent/status` | GET | Agent stats (incidents, confidence, learning) |
-| `/api/agent/start` | POST | Start agent |
-| `/api/agent/stop` | POST | Stop agent |
-| `/api/learning` | GET | Learning records and stats |
-| `/api/voice/summary` | GET | Generate voice summary |
-| `/ws/:username` | WS | WebSocket for real-time updates |
-
-## 🛠️ Tech Stack
-
-- **Backend**: Python, FastAPI, SQLAlchemy, SQLite
-- **Agent**: Anthropic Claude (with rule-based fallback)
-- **Sandbox**: Blaxel SDK (with local subprocess fallback)
-- **Safety**: White Circle AI (with built-in checks fallback)
-- **Voice**: ElevenLabs TTS API
-- **Frontend**: Vanilla JS, Tailwind CSS, WebSocket
-- **Real-time**: WebSocket broadcast + live presence tracking
+---
 
 ## 📁 Project Structure
 
 ```
 agentops/
-├── main.py              # FastAPI server — API, WebSocket, dashboard
-├── agent_core.py        # AI agent — monitor → diagnose → fix → learn
-├── monitored_app.py     # Simulated microservices with fault injection
-├── sandbox.py           # Blaxel SDK integration (+ local fallback)
-├── safety_check.py      # White Circle AI safety validation
-├── voice_alerts.py      # ElevenLabs TTS voice alerts
-├── ws_manager.py        # WebSocket real-time broadcast + presence
-├── db.py                # SQLite models (incidents, approvals, learning)
-├── schemas.py           # Pydantic API schemas
-├── config.py            # Environment configuration
+├── main.py              # FastAPI server, auth, proxy, analytics, WebSocket
+├── agent_core.py        # Agent brain: monitoring, diagnosis, fix generation, confidence
+├── monitored_app.py     # Blaxel SDK integration, fault injection, health checks
+├── safety_check.py      # White Circle AI integration + local safety engine fallback
+├── voice_alerts.py      # ElevenLabs TTS voice alert generation
+├── sandbox.py           # Blaxel sandbox for isolated code testing
+├── db.py                # SQLite models: User, Incident, Notification, LearningRecord
+├── schemas.py           # Pydantic schemas
+├── config.py            # Environment variable loading
 ├── static/
-│   ├── index.html       # Collaborative dashboard UI
-│   └── app.js           # Frontend WebSocket + incident management
-├── .env.example         # Configuration template
-├── requirements.txt     # Python dependencies
-└── run.sh               # Quick start script
+│   ├── index.html       # Dashboard: login, incidents, analytics, team, reports
+│   ├── app.js           # Frontend: WebSocket, auth, tabs, role-based UI
+│   ├── live.html        # Live API viewer (auto-refresh 5s)
+│   └── shop.html        # E-commerce storefront with checkout
+└── target_app/
+    ├── server.py         # Target e-commerce HTTP server
+    ├── handler.py        # Request handler (products, orders, analytics, users)
+    ├── handler.py.bak    # Known-good backup for fault recovery
+    ├── config.json       # App configuration
+    └── config.json.bak   # Known-good config backup
 ```
 
-## Built at [Iterate](https://iterate.world) x CBS AI Club Hackathon @ Columbia Business School
+---
+
+## 🧪 Demo Flow
+
+1. **Login** as Shweta (Team Lead) → see clean dashboard
+2. **Inject Bug** → watch agent detect NameError in seconds
+3. **Claude diagnoses** → identifies handler.py line 54, generates fix diff
+4. **White Circle validates** → "✅ SAFE — no policies flagged"
+5. **Auto-deploys** → confidence 95%, medium severity → no human needed
+6. **App recovers** → healthy in ~30 seconds
+7. **Inject Crash** → process killed (BLOCKER severity)
+8. **Agent diagnoses** → confidence 90%, but BLOCKER → needs Team Lead
+9. **Shweta approves** → fix deploys, clearance report generated
+10. **Try as Bhumika** → can't approve BLOCKER → "Insufficient clearance"
+
+---
+
+## 👥 Team
+
+- **Yash Prasad** — Architecture, agent core, full-stack development
+- **Shweta** — Testing, role-based access design, demo flow
+- **Bhumika** — UI/UX, team collaboration features
+
+---
+
+## 📄 License
+
+MIT

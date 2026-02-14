@@ -10,6 +10,7 @@ When the API is reachable, we use it directly. When it's not (SSL issues),
 we run an equivalent local safety engine mirroring their check categories.
 """
 import json
+import os
 import re
 import httpx
 from typing import Dict, Any, List
@@ -50,45 +51,75 @@ class SafetyChecker:
         return await self._local_safety_engine(incident_context, proposed_fix)
 
     async def _whitecircle_check(self, context: Dict, fix: str) -> Dict[str, Any]:
-        """Use White Circle AI API for safety validation."""
-        async with httpx.AsyncClient(timeout=10) as client:
+        """Use White Circle AI API for safety validation via /api/session/check."""
+        deployment_id = os.environ.get("WHITECIRCLE_DEPLOYMENT_ID", "")
+        fault_type = context.get("fault_type", "unknown")
+        severity = context.get("severity", "medium")
+        root_cause = context.get("root_cause", "Unknown issue")
+
+        async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
-                f"{self.api_url}/evaluate",
+                f"{self.api_url}/session/check",
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                 },
                 json={
-                    "input": json.dumps(context),
-                    "output": fix,
-                    "checks": [
-                        "no_data_loss",
-                        "no_security_regression",
-                        "no_destructive_commands",
-                        "idempotent_safe",
-                        "rollback_possible",
+                    "deployment_id": deployment_id,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": (
+                                f"[AgentOps Safety Check] Fault: {fault_type} | Severity: {severity}\n"
+                                f"Root cause: {root_cause}\n"
+                                f"Proposed fix needs safety validation before deployment."
+                            ),
+                        },
+                        {
+                            "role": "assistant",
+                            "content": fix,
+                        },
                     ],
                 },
             )
             if resp.status_code != 200 or not resp.text.strip():
-                raise Exception(f"HTTP {resp.status_code}: empty or error response")
+                err_body = resp.text[:200] if resp.text else "empty"
+                raise Exception(f"HTTP {resp.status_code}: {err_body}")
 
             data = resp.json()
             self.checks_run += 1
-            passed = data.get("passed", False)
+
+            # White Circle returns flagged=true if unsafe, flagged=false if safe
+            flagged = data.get("flagged", False)
+            passed = not flagged
+            policies = data.get("policies", {})
+            policy_details = []
+            for pid, pdata in policies.items():
+                policy_details.append(f"{'❌' if pdata.get('flagged') else '✅'} {pdata.get('name', pid)}")
+
             if passed:
                 self.checks_passed += 1
             else:
                 self.checks_failed += 1
 
+            reasoning = (
+                f"White Circle AI Safety Analysis (API)\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"Fault Type: {fault_type} | Severity: {severity}\n"
+                f"Verdict: {'✅ SAFE — no policies flagged' if passed else '❌ UNSAFE — flagged by policy'}\n\n"
+                f"Policies:\n" + "\n".join(f"  {d}" for d in policy_details) if policy_details else
+                f"White Circle AI: {'✅ SAFE' if passed else '❌ FLAGGED'}"
+            )
+
             return {
                 "passed": passed,
-                "score": data.get("score", 0.0),
-                "checks": data.get("checks", {}),
-                "reasoning": data.get("reasoning", ""),
-                "warnings": data.get("warnings", []),
+                "score": 1.0 if passed else 0.1,
+                "checks": {p.get("name", k): not p.get("flagged", False) for k, p in policies.items()},
+                "reasoning": reasoning,
+                "warnings": [f"Flagged by: {p.get('name')}" for p in policies.values() if p.get("flagged")],
                 "provider": "White Circle AI",
                 "provider_mode": "api",
+                "session_id": data.get("internal_session_id"),
             }
 
     async def _local_safety_engine(self, context: Dict, fix: str) -> Dict[str, Any]:

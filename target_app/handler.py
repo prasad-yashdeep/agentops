@@ -184,14 +184,32 @@ def process_checkout(data):
     shipping = config.get("shipping_flat_rate", 5.99)
     total = subtotal + tax + shipping
 
+    global _next_order_id
+
     # Deduct stock
     for cart_item in cart:
         product = get_product_by_id(cart_item["product_id"])
         product["stock"] -= cart_item.get("qty", 1)
 
+    # Create the order and add to orders list
+    order = {
+        "id": _next_order_id,
+        "user_id": user_id or 1,
+        "items": [{"product_id": i["product_id"], "qty": i["qty"]} for i in items],
+        "subtotal": round(subtotal, 2),
+        "tax": round(tax, 2),
+        "shipping": shipping,
+        "total": round(total, 2),
+        "status": "processing",
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "payment_method": payment_method,
+    }
+    ORDERS.append(order)
+    _next_order_id += 1
+
     return {
         "status": "success",
-        "order_id": _next_order_id,
+        "order_id": order["id"],
         "items": items,
         "subtotal": round(subtotal, 2),
         "tax": round(tax, 2),

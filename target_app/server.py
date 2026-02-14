@@ -31,11 +31,30 @@ def load_config():
         log("ERROR", "FATAL: config.json not found!")
         raise
 
+_handler_cache = None
+_handler_mtime = 0
+
 def load_handler():
+    """Load handler module. Caches it and only reloads when the file changes.
+    This preserves in-memory state (orders, stock) between requests,
+    while still picking up fault injections (which modify the file).
+    """
+    global _handler_cache, _handler_mtime
     import importlib.util
+    try:
+        current_mtime = os.path.getmtime(HANDLER_PATH)
+    except OSError:
+        current_mtime = 0
+
+    if _handler_cache is not None and current_mtime == _handler_mtime:
+        return _handler_cache
+
     spec = importlib.util.spec_from_file_location("handler", HANDLER_PATH)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    _handler_cache = mod
+    _handler_mtime = current_mtime
+    log("INFO", f"Handler {'reloaded' if _handler_mtime else 'loaded'} (mtime={current_mtime})")
     return mod
 
 REQUEST_COUNT = 0

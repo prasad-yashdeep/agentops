@@ -222,6 +222,7 @@ class AgentOps:
                     "id": incident.id, "status": "deploying", "confidence": confidence,
                     "proposed_fix": incident.proposed_fix, "fix_diff": incident.fix_diff,
                     "safety": safety_result, "auto": True,
+                    "file_at_fault": diagnosis.get("file_at_fault"),
                 })
                 await asyncio.sleep(1)
                 await self._apply_fix(incident, fault_type, db)
@@ -248,6 +249,7 @@ class AgentOps:
                     "confidence": confidence, "proposed_fix": incident.proposed_fix,
                     "fix_diff": incident.fix_diff, "safety": safety_result,
                     "root_cause": incident.root_cause,
+                    "file_at_fault": diagnosis.get("file_at_fault"),
                 })
         finally:
             db.close()

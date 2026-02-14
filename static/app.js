@@ -312,6 +312,8 @@ function hideActions() { document.getElementById('action-buttons').classList.add
 
 function showResolved() {
     hideActions();
+    // Remove ALL spinners from the timeline
+    document.querySelectorAll('#timeline .animate-spin').forEach(el => el.remove());
     // Switch health back visually
     setTimeout(() => {
         document.getElementById('health-dot').className = 'w-2.5 h-2.5 rounded-full bg-green-500';

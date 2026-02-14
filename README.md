@@ -284,9 +284,9 @@ ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
 ```
 
 ### Access
-- **Dashboard**: http://localhost:8000
-- **Live App**: http://localhost:8000/live
-- **Shop**: http://localhost:8000/shop
+- **Dashboard**: https://her-believe-page-bean.trycloudflare.com
+- **Live App**: https://her-believe-page-bean.trycloudflare.com/live
+- **Shop**: https://her-believe-page-bean.trycloudflare.com/shop
 - **Team Logins**: Bhumika / Yash / Shweta (password: `1234`)
 
 ---

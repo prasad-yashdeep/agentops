@@ -1,714 +1,463 @@
-// ─── AgentOps Frontend ──────────────────────────────────────────────
+// ─── AgentOps Frontend — Clean Demo UI ──────────────────────────────
 let ws = null;
 let currentUser = null;
-let selectedIncidentId = null;
-let incidents = {};
-let activities = [];
+let currentIncident = null;  // Single focused incident
+let timelineSteps = [];
 
-const SEVERITY_COLORS = {
-    critical: { bg: 'bg-crit/20', text: 'text-crit', border: 'severity-critical', dot: 'bg-crit' },
-    high: { bg: 'bg-danger/20', text: 'text-danger', border: 'severity-high', dot: 'bg-danger' },
-    medium: { bg: 'bg-warn/20', text: 'text-warn', border: 'severity-medium', dot: 'bg-warn' },
-    low: { bg: 'bg-ok/20', text: 'text-ok', border: 'severity-low', dot: 'bg-ok' },
-};
-
-const STATUS_LABELS = {
-    detected: '🔍 Detected',
-    diagnosing: '🧠 Diagnosing',
-    fix_proposed: '🔧 Fix Ready',
-    awaiting_approval: '⏳ Needs Approval',
-    approved: '✅ Approved',
-    deploying: '🚀 Deploying',
-    resolved: '✅ Resolved',
-    rejected: '❌ Rejected',
-};
-
-const AVATAR_COLORS = [
-    '#6c5ce7', '#00b894', '#e17055', '#0984e3', '#fdcb6e',
-    '#e84393', '#00cec9', '#d63031', '#74b9ff', '#55efc4',
-];
-
-function getAvatarColor(name) {
-    let hash = 0;
-    for (let c of name) hash = c.charCodeAt(0) + ((hash << 5) - hash);
-    return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
+const AVATAR_COLORS = ['#a855f7','#22c55e','#ef4444','#3b82f6','#eab308','#ec4899','#06b6d4','#f97316'];
+function avatarColor(name) { let h=0; for(let c of name) h=c.charCodeAt(0)+((h<<5)-h); return AVATAR_COLORS[Math.abs(h)%AVATAR_COLORS.length]; }
+function timeAgo(ts) { if(!ts)return''; const s=Math.floor((Date.now()-new Date(ts))/1000); if(s<5)return'now'; if(s<60)return s+'s'; if(s<3600)return Math.floor(s/60)+'m'; return Math.floor(s/3600)+'h'; }
 
 // ─── WebSocket ──────────────────────────────────────────────────────
-
 function connectWS() {
     if (!currentUser) return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     ws = new WebSocket(`${proto}://${location.host}/ws/${currentUser}`);
-
-    ws.onmessage = (e) => {
-        const msg = JSON.parse(e.data);
-        handleWSMessage(msg);
-    };
-
-    ws.onclose = () => {
-        setTimeout(connectWS, 2000);
-    };
+    ws.onmessage = (e) => handleMsg(JSON.parse(e.data));
+    ws.onclose = () => setTimeout(connectWS, 2000);
 }
 
-function handleWSMessage(msg) {
-    switch (msg.type) {
-        case 'incident_new':
-            addIncident(msg.data);
-            break;
-        case 'incident_update':
-            updateIncident(msg.data);
-            break;
-        case 'activity':
-            addActivity(msg.data);
-            break;
-        case 'new_comment':
-            addCommentToFeed(msg.data);
-            break;
-        case 'presence':
-            updatePresence(msg.data);
-            break;
-        case 'agent_status':
-            updateAgentStatus(msg.data);
-            break;
-        case 'voice_alert':
-            playVoiceAlert(msg.data);
-            break;
-        case 'health_update':
-            updateAppHealth(msg.data);
-            break;
+function handleMsg(msg) {
+    const d = msg.data;
+    switch(msg.type) {
+        case 'health_update': updateHealth(d); break;
+        case 'incident_new': onNewIncident(d); break;
+        case 'incident_update': onIncidentUpdate(d); break;
+        case 'activity': addActivity(d); break;
+        case 'new_comment': onNewComment(d); break;
+        case 'presence': updatePresence(d); break;
+        case 'voice_alert': playVoice(d); break;
         case 'fault_injected':
-            addActivity({
-                actor: 'system', action: 'fault_injected',
-                detail: `💥 ${msg.data.fault} fault injected — ${msg.data.detail || ''}`,
-                created_at: new Date().toISOString(),
-            });
-            break;
-        case 'user_typing':
-            showTypingIndicator(msg.data);
+            addActivity({ actor:'system', action:'fault_injected', detail:`💥 ${d.fault}: ${d.detail}`, created_at:new Date().toISOString() });
             break;
     }
     refreshStats();
 }
 
 // ─── Session ────────────────────────────────────────────────────────
-
 function joinSession() {
     const input = document.getElementById('username-input');
     const name = input.value.trim();
     if (!name) return;
     currentUser = name;
-    input.style.display = 'none';
-    document.querySelector('#user-section button').style.display = 'none';
-    document.getElementById('user-section').innerHTML = `
-        <div class="flex items-center gap-2">
-            <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white"
-                 style="background: ${getAvatarColor(name)}">${name[0].toUpperCase()}</div>
-            <span class="text-sm">${name}</span>
-        </div>
-    `;
-    document.getElementById('comment-section').classList.remove('hidden');
+    document.getElementById('join-section').innerHTML = `
+        <div class="flex items-center gap-2 text-sm">
+            <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold" style="background:${avatarColor(name)}">${name[0].toUpperCase()}</div>
+            <span class="text-zinc-400">${name}</span>
+        </div>`;
     connectWS();
     loadInitialData();
 }
 
-// ─── Data Loading ───────────────────────────────────────────────────
-
 async function loadInitialData() {
     try {
-        const [incidentsRes, activityRes, statsRes] = await Promise.all([
-            fetch('/api/incidents'),
-            fetch('/api/activity?limit=100'),
-            fetch('/api/agent/status'),
+        const [inc, act, stats] = await Promise.all([
+            fetch('/api/incidents').then(r=>r.json()),
+            fetch('/api/activity?limit=50').then(r=>r.json()),
+            fetch('/api/agent/status').then(r=>r.json()),
         ]);
-        const incidentsList = await incidentsRes.json();
-        const activityList = await activityRes.json();
-        const stats = await statsRes.json();
-
-        incidentsList.forEach(inc => {
-            incidents[inc.id] = inc;
-        });
-        activities = activityList;
-
-        renderIncidentList();
-        renderActivityFeed();
+        // Show the most recent unresolved incident
+        const active = inc.find(i => !['resolved','rejected'].includes(i.status));
+        if (active) showIncident(active);
+        act.reverse().forEach(a => addActivity(a, true));
         updateStatsDisplay(stats);
-    } catch (e) {
-        console.error('Failed to load initial data:', e);
-    }
+    } catch(e) { console.error(e); }
 }
 
-async function refreshStats() {
-    try {
-        const res = await fetch('/api/agent/status');
-        const stats = await res.json();
-        updateStatsDisplay(stats);
-    } catch (e) {}
-}
-
-function updateStatsDisplay(stats) {
-    document.getElementById('stat-total').textContent = stats.incidents_total || 0;
-    document.getElementById('stat-resolved').textContent = stats.incidents_resolved || 0;
-    document.getElementById('stat-auto').textContent = stats.auto_resolved || 0;
-    document.getElementById('stat-learning').textContent = stats.learning_records || 0;
-    const avg = stats.confidence_avg;
-    document.getElementById('stat-confidence').textContent = avg > 0 ? `${(avg * 100).toFixed(0)}%` : '—';
-    const safety = stats.safety_stats || {};
-    document.getElementById('stat-safety').textContent = `${safety.checks_passed || 0}/${safety.checks_run || 0}`;
-}
-
-// ─── Incident List ──────────────────────────────────────────────────
-
-function addIncident(data) {
-    incidents[data.id] = { ...incidents[data.id], ...data };
-    renderIncidentList();
-    // Flash effect
-    setTimeout(() => {
-        const el = document.getElementById(`inc-${data.id}`);
-        if (el) el.classList.add('slide-in');
-    }, 10);
-}
-
-function updateIncident(data) {
-    if (incidents[data.id]) {
-        incidents[data.id] = { ...incidents[data.id], ...data };
+// ─── Health ─────────────────────────────────────────────────────────
+function updateHealth(d) {
+    const dot = document.getElementById('health-dot');
+    const ring = document.getElementById('health-ring');
+    const text = document.getElementById('health-text');
+    if (d.healthy) {
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-green-500';
+        ring.className = 'absolute inset-0 w-2.5 h-2.5 rounded-full bg-green-500 pulse-ring';
+        text.textContent = `Healthy (${Math.round(d.response_time_ms || 0)}ms)`;
+        text.className = 'text-zinc-400';
     } else {
-        incidents[data.id] = data;
-    }
-    renderIncidentList();
-    if (selectedIncidentId === data.id) {
-        renderIncidentDetail(data.id);
-    }
-}
-
-function renderIncidentList() {
-    const list = document.getElementById('incident-list');
-    const sorted = Object.values(incidents).sort((a, b) => {
-        const aTime = new Date(a.detected_at || 0).getTime();
-        const bTime = new Date(b.detected_at || 0).getTime();
-        return bTime - aTime;
-    });
-
-    if (sorted.length === 0) {
-        list.innerHTML = '<div class="text-center text-gray-600 text-sm py-8">No incidents yet</div>';
-        return;
-    }
-
-    list.innerHTML = sorted.map(inc => {
-        const sev = SEVERITY_COLORS[inc.severity] || SEVERITY_COLORS.medium;
-        const status = STATUS_LABELS[inc.status] || inc.status;
-        const selected = selectedIncidentId === inc.id ? 'bg-surface-300' : 'hover:bg-surface-200';
-        const timeAgo = getTimeAgo(inc.detected_at);
-
-        return `
-            <div id="inc-${inc.id}" onclick="selectIncident('${inc.id}')"
-                 class="${sev.border} ${selected} rounded-lg p-3 cursor-pointer transition">
-                <div class="flex items-start justify-between">
-                    <div class="flex-1 min-w-0">
-                        <div class="text-xs ${sev.text} font-semibold uppercase">${inc.severity}</div>
-                        <div class="text-sm font-medium text-white truncate mt-0.5">${inc.service_name || inc.service || 'unknown'}</div>
-                        <div class="text-xs text-gray-500 mt-1">${status}</div>
-                    </div>
-                    <div class="text-xs text-gray-600 ml-2">${timeAgo}</div>
-                </div>
-                ${inc.confidence_score ? `
-                    <div class="mt-2 flex items-center gap-2">
-                        <div class="flex-1 h-1 bg-surface-300 rounded-full overflow-hidden">
-                            <div class="h-full rounded-full ${inc.confidence_score > 0.8 ? 'bg-ok' : inc.confidence_score > 0.5 ? 'bg-warn' : 'bg-danger'}"
-                                 style="width: ${inc.confidence_score * 100}%"></div>
-                        </div>
-                        <span class="text-xs text-gray-500">${(inc.confidence_score * 100).toFixed(0)}%</span>
-                    </div>
-                ` : ''}
-            </div>
-        `;
-    }).join('');
-}
-
-// ─── Incident Detail ────────────────────────────────────────────────
-
-async function selectIncident(id) {
-    selectedIncidentId = id;
-    renderIncidentList();
-
-    // Tell server we're viewing this incident
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'viewing', incident_id: id }));
-    }
-
-    // Load full incident data
-    try {
-        const [incRes, commentsRes, approvalsRes] = await Promise.all([
-            fetch(`/api/incidents/${id}`),
-            fetch(`/api/incidents/${id}/comments`),
-            fetch(`/api/incidents/${id}/approvals`),
-        ]);
-        const inc = await incRes.json();
-        const comments = await commentsRes.json();
-        const approvals = await approvalsRes.json();
-
-        incidents[id] = inc;
-        renderIncidentDetail(id, comments, approvals);
-
-        // Load incident-specific activity
-        const actRes = await fetch(`/api/activity?incident_id=${id}`);
-        const incActivities = await actRes.json();
-        renderActivityFeed(incActivities);
-    } catch (e) {
-        console.error('Failed to load incident:', e);
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-red-500';
+        ring.className = 'absolute inset-0 w-2.5 h-2.5 rounded-full bg-red-500 pulse-ring';
+        text.textContent = d.error_type || d.error || 'Error';
+        text.className = 'text-red-400';
     }
 }
 
-function renderIncidentDetail(id, comments = [], approvals = []) {
-    const inc = incidents[id];
-    if (!inc) return;
+// ─── Incident ───────────────────────────────────────────────────────
+function onNewIncident(d) {
+    currentIncident = d;
+    timelineSteps = [];
+    showIncident(d);
+    addStep('🚨', 'Detected', d.title || d.description || 'Anomaly detected', 'red');
+}
 
-    const sev = SEVERITY_COLORS[inc.severity] || SEVERITY_COLORS.medium;
-    const status = STATUS_LABELS[inc.status] || inc.status;
-    const detail = document.getElementById('incident-detail');
+function onIncidentUpdate(d) {
+    if (!currentIncident) { currentIncident = d; showIncident(d); return; }
+    currentIncident = { ...currentIncident, ...d };
 
-    let safetyHtml = '';
+    if (d.status === 'diagnosing' && d.root_cause) {
+        addStep('🔍', 'Root Cause Found', d.root_cause, 'amber');
+        if (d.reasoning) {
+            addStepDetail('Agent reasoning', typeof d.reasoning === 'string' ? d.reasoning : JSON.stringify(d.reasoning, null, 2));
+        }
+    } else if (d.status === 'diagnosing') {
+        addStep('🧠', 'Diagnosing...', 'Analyzing error logs and source code', 'purple', true);
+    }
+
+    if (d.proposed_fix) {
+        addStep('🔧', 'Fix Generated', d.proposed_fix, 'blue');
+        if (d.fix_diff) {
+            addStepCode(d.fix_diff);
+        }
+    }
+
+    if (d.safety) {
+        const s = d.safety;
+        const passed = s.passed;
+        addStep(passed ? '🛡️' : '⚠️', `Safety Check: ${passed ? 'PASSED' : 'FAILED'}`,
+            `Score: ${(s.score*100).toFixed(0)}% · Provider: ${s.provider || 'builtin'}` +
+            (s.warnings?.length ? ` · ⚠️ ${s.warnings.length} warning(s)` : ''),
+            passed ? 'green' : 'red');
+    }
+
+    if (d.confidence !== undefined) {
+        const conf = d.confidence;
+        const pct = (conf * 100).toFixed(0);
+        updateConfidence(conf);
+    }
+
+    if (d.status === 'deploying') {
+        addStep('🚀', d.auto ? 'Auto-Deploying Fix' : `Deploying Fix (approved by ${d.approved_by || d.overridden_by || 'team'})`,
+            d.auto ? `Confidence ${(d.confidence*100).toFixed(0)}% exceeded threshold — deploying automatically` : 'Applying fix to production...',
+            'purple', true);
+    }
+
+    if (d.status === 'resolved') {
+        addStep('✅', 'Resolved!', d.auto_resolved ? 'Auto-fixed by agent' : 'Fixed with team approval', 'green');
+        showResolved();
+    }
+
+    if (d.status === 'rejected') {
+        addStep('❌', 'Rejected', `Rejected by ${d.rejected_by || 'team'}`, 'red');
+        hideActions();
+    }
+
+    if (d.status === 'fix_proposed') {
+        showActions();
+    }
+}
+
+function showIncident(inc) {
+    document.getElementById('empty-state').classList.add('hidden');
+    document.getElementById('incident-view').classList.remove('hidden');
+    document.getElementById('comments-section').classList.remove('hidden');
+
+    const sevColors = { critical:'red', high:'orange', medium:'amber', low:'green' };
+    const c = sevColors[inc.severity] || 'zinc';
+
+    document.getElementById('inc-header').innerHTML = `
+        <div class="flex items-center gap-3 mb-2">
+            <span class="text-xs font-bold uppercase px-2 py-1 rounded-md bg-${c}-500/10 text-${c}-400 border border-${c}-500/20">${inc.severity || 'detected'}</span>
+            <span class="text-xs text-zinc-600 mono">#${inc.id}</span>
+            <span class="text-xs text-zinc-600">${timeAgo(inc.detected_at)} ago</span>
+        </div>
+        <h2 class="text-xl font-bold">${inc.title || inc.description || 'Incident Detected'}</h2>
+        ${inc.description ? `<p class="text-sm text-zinc-400 mt-1">${inc.description}</p>` : ''}
+        <div id="confidence-bar" class="hidden mt-3"></div>
+    `;
+
+    // If incident has existing data, rebuild timeline
+    if (inc.root_cause) {
+        addStep('🚨', 'Detected', inc.title || 'Anomaly detected', 'red');
+        addStep('🔍', 'Root Cause Found', inc.root_cause, 'amber');
+    }
+    if (inc.proposed_fix) {
+        addStep('🔧', 'Fix Generated', inc.proposed_fix, 'blue');
+        if (inc.fix_diff) addStepCode(inc.fix_diff);
+    }
+    if (inc.confidence_score) updateConfidence(inc.confidence_score);
     if (inc.safety_check_result) {
         try {
-            const safety = typeof inc.safety_check_result === 'string' ? JSON.parse(inc.safety_check_result) : inc.safety_check_result;
-            const checks = safety.checks || {};
-            safetyHtml = `
-                <div class="bg-surface-100 rounded-lg p-4 border border-surface-300">
-                    <h3 class="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
-                        🛡️ Safety Check 
-                        <span class="text-xs px-2 py-0.5 rounded ${safety.passed ? 'bg-ok/20 text-ok' : 'bg-danger/20 text-danger'}">
-                            ${safety.passed ? 'PASSED' : 'FAILED'}
-                        </span>
-                        <span class="text-xs text-gray-600">via ${safety.provider || 'unknown'}</span>
-                    </h3>
-                    <div class="grid grid-cols-2 gap-2">
-                        ${Object.entries(checks).map(([k, v]) => `
-                            <div class="flex items-center gap-2 text-xs">
-                                <span>${v ? '✅' : '❌'}</span>
-                                <span class="text-gray-400">${k.replace(/_/g, ' ')}</span>
-                            </div>
-                        `).join('')}
-                    </div>
-                    ${safety.warnings?.length ? `
-                        <div class="mt-2 space-y-1">
-                            ${safety.warnings.map(w => `<div class="text-xs text-warn">⚠️ ${w}</div>`).join('')}
-                        </div>
-                    ` : ''}
-                </div>
-            `;
-        } catch (e) {}
+            const s = JSON.parse(inc.safety_check_result);
+            addStep(s.passed ? '🛡️' : '⚠️', `Safety: ${s.passed?'PASSED':'FAILED'}`, `Score: ${(s.score*100).toFixed(0)}%`, s.passed?'green':'red');
+        } catch(e){}
     }
+    if (inc.status === 'resolved') {
+        addStep('✅', 'Resolved', inc.auto_resolved ? 'Auto-fixed' : 'Fixed by team', 'green');
+        showResolved();
+    } else if (['fix_proposed','awaiting_approval'].includes(inc.status)) {
+        showActions();
+    }
+}
 
-    detail.innerHTML = `
-        <div class="max-w-3xl mx-auto space-y-4">
-            <!-- Header -->
-            <div class="flex items-start justify-between">
-                <div>
-                    <div class="flex items-center gap-2 mb-1">
-                        <span class="text-xs font-bold uppercase px-2 py-0.5 rounded ${sev.bg} ${sev.text}">${inc.severity}</span>
-                        <span class="text-xs text-gray-500 mono">#${inc.id}</span>
-                    </div>
-                    <h2 class="text-xl font-bold text-white">${inc.title || `${inc.service_name} incident`}</h2>
-                    <p class="text-sm text-gray-400 mt-1">${inc.description || ''}</p>
+// ─── Timeline Steps ─────────────────────────────────────────────────
+function addStep(icon, title, detail, color='zinc', loading=false) {
+    const timeline = document.getElementById('timeline');
+    const stepId = `step-${Date.now()}`;
+    const div = document.createElement('div');
+    div.id = stepId;
+    div.className = 'step-enter opacity-0';
+    div.innerHTML = `
+        <div class="flex gap-3 items-start">
+            <div class="w-8 h-8 rounded-lg bg-${color}-500/10 flex items-center justify-center text-sm shrink-0 mt-0.5">${icon}</div>
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                    <span class="text-sm font-semibold">${title}</span>
+                    ${loading ? '<div class="w-3 h-3 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>' : ''}
                 </div>
-                <div class="text-right">
-                    <div class="text-sm font-medium">${status}</div>
-                    <div class="text-xs text-gray-500 mt-1">${formatTime(inc.detected_at)}</div>
-                </div>
+                <p class="text-sm text-zinc-400 mt-0.5">${detail}</p>
             </div>
+            <span class="text-xs text-zinc-700 shrink-0">${new Date().toLocaleTimeString()}</span>
+        </div>
+    `;
+    timeline.appendChild(div);
+    // Trigger animation
+    requestAnimationFrame(() => div.classList.remove('opacity-0'));
+    div.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
 
-            <!-- Confidence Bar -->
-            ${inc.confidence_score ? `
-                <div class="bg-surface-100 rounded-lg p-4 border border-surface-300">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-sm text-gray-400">Agent Confidence</span>
-                        <span class="text-lg font-bold ${inc.confidence_score > 0.8 ? 'text-ok' : inc.confidence_score > 0.5 ? 'text-warn' : 'text-danger'}">
-                            ${(inc.confidence_score * 100).toFixed(0)}%
-                        </span>
-                    </div>
-                    <div class="h-2 bg-surface-300 rounded-full overflow-hidden">
-                        <div class="h-full rounded-full transition-all duration-500 ${inc.confidence_score > 0.8 ? 'bg-ok' : inc.confidence_score > 0.5 ? 'bg-warn' : 'bg-danger'}"
-                             style="width: ${inc.confidence_score * 100}%"></div>
-                    </div>
-                    <div class="flex justify-between mt-1 text-xs text-gray-600">
-                        <span>Escalate (${(0.5 * 100).toFixed(0)}%)</span>
-                        <span>Auto-fix (${(0.85 * 100).toFixed(0)}%)</span>
-                    </div>
-                </div>
-            ` : ''}
+function addStepDetail(title, content) {
+    const timeline = document.getElementById('timeline');
+    const div = document.createElement('div');
+    div.className = 'step-enter opacity-0 ml-11';
+    div.innerHTML = `
+        <details class="group">
+            <summary class="text-xs text-zinc-500 cursor-pointer hover:text-zinc-300 transition">${title} ▸</summary>
+            <pre class="mt-2 text-xs text-zinc-500 mono bg-zinc-900 border border-zinc-800 rounded-lg p-3 whitespace-pre-wrap overflow-x-auto max-h-48">${content}</pre>
+        </details>
+    `;
+    timeline.appendChild(div);
+    requestAnimationFrame(() => div.classList.remove('opacity-0'));
+}
 
-            <!-- Root Cause -->
-            ${inc.root_cause ? `
-                <div class="bg-surface-100 rounded-lg p-4 border border-surface-300">
-                    <h3 class="text-sm font-semibold text-gray-400 mb-2">🔍 Root Cause</h3>
-                    <p class="text-sm text-white">${inc.root_cause}</p>
-                    ${inc.agent_reasoning ? `
-                        <details class="mt-2">
-                            <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-400">Agent Reasoning</summary>
-                            <pre class="text-xs text-gray-400 mt-2 whitespace-pre-wrap mono bg-surface-200 p-3 rounded">${
-                                typeof inc.agent_reasoning === 'string' ? inc.agent_reasoning : JSON.stringify(inc.agent_reasoning, null, 2)
-                            }</pre>
-                        </details>
-                    ` : ''}
-                </div>
-            ` : ''}
+function addStepCode(code) {
+    const timeline = document.getElementById('timeline');
+    const div = document.createElement('div');
+    div.className = 'step-enter opacity-0 ml-11';
+    div.innerHTML = `
+        <pre class="text-xs mono bg-zinc-900 border border-zinc-800 rounded-lg p-3 whitespace-pre-wrap overflow-x-auto max-h-56 leading-relaxed">${highlightDiff(code)}</pre>
+    `;
+    timeline.appendChild(div);
+    requestAnimationFrame(() => div.classList.remove('opacity-0'));
+}
 
-            <!-- Proposed Fix -->
-            ${inc.proposed_fix ? `
-                <div class="bg-surface-100 rounded-lg p-4 border border-surface-300">
-                    <h3 class="text-sm font-semibold text-gray-400 mb-2">🔧 Proposed Fix</h3>
-                    <p class="text-sm text-white">${inc.proposed_fix}</p>
-                    ${inc.fix_diff ? `
-                        <pre class="text-xs mt-3 p-3 bg-surface-200 rounded mono text-green-400 whitespace-pre-wrap overflow-x-auto">${inc.fix_diff}</pre>
-                    ` : ''}
-                </div>
-            ` : ''}
+function highlightDiff(text) {
+    return text.split('\n').map(line => {
+        if (line.startsWith('+') && !line.startsWith('+++')) return `<span class="text-green-400">${esc(line)}</span>`;
+        if (line.startsWith('-') && !line.startsWith('---')) return `<span class="text-red-400">${esc(line)}</span>`;
+        if (line.startsWith('@@')) return `<span class="text-purple-400">${esc(line)}</span>`;
+        return `<span class="text-zinc-500">${esc(line)}</span>`;
+    }).join('\n');
+}
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-            <!-- Safety Check -->
-            ${safetyHtml}
-
-            <!-- Error Logs -->
-            ${inc.error_logs ? `
-                <details class="bg-surface-100 rounded-lg border border-surface-300">
-                    <summary class="p-4 text-sm font-semibold text-gray-400 cursor-pointer hover:text-gray-300">📋 Error Logs</summary>
-                    <pre class="px-4 pb-4 text-xs text-red-400 mono whitespace-pre-wrap overflow-x-auto max-h-64">${
-                        typeof inc.error_logs === 'string' ? inc.error_logs : JSON.stringify(inc.error_logs, null, 2)
-                    }</pre>
-                </details>
-            ` : ''}
-
-            <!-- Action Buttons -->
-            ${['fix_proposed', 'awaiting_approval'].includes(inc.status) && currentUser ? `
-                <div class="bg-surface-100 rounded-lg p-4 border border-surface-300">
-                    <h3 class="text-sm font-semibold text-gray-400 mb-3">👥 Your Decision</h3>
-                    <div class="flex gap-2 flex-wrap">
-                        <button onclick="approveIncident('${inc.id}', 'approve')"
-                                class="bg-ok/20 text-ok hover:bg-ok/30 px-4 py-2 rounded font-medium text-sm transition">
-                            ✅ Approve & Deploy
-                        </button>
-                        <button onclick="approveIncident('${inc.id}', 'reject')"
-                                class="bg-danger/20 text-danger hover:bg-danger/30 px-4 py-2 rounded font-medium text-sm transition">
-                            ❌ Reject
-                        </button>
-                        <button onclick="showOverrideModal('${inc.id}')"
-                                class="bg-warn/20 text-warn hover:bg-warn/30 px-4 py-2 rounded font-medium text-sm transition">
-                            ✏️ Override Fix
-                        </button>
-                        <button onclick="requestChanges('${inc.id}')"
-                                class="bg-accent/20 text-accent-light hover:bg-accent/30 px-4 py-2 rounded font-medium text-sm transition">
-                            💬 Request Changes
-                        </button>
-                    </div>
-                </div>
-            ` : ''}
-
-            <!-- Approvals History -->
-            ${approvals.length ? `
-                <div class="bg-surface-100 rounded-lg p-4 border border-surface-300">
-                    <h3 class="text-sm font-semibold text-gray-400 mb-3">📝 Approvals</h3>
-                    <div class="space-y-2">
-                        ${approvals.map(a => `
-                            <div class="flex items-center gap-2 text-sm">
-                                <div class="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-white"
-                                     style="background: ${getAvatarColor(a.user_name)}">${a.user_name[0].toUpperCase()}</div>
-                                <span class="font-medium">${a.user_name}</span>
-                                <span class="text-gray-500">${a.action}</span>
-                                ${a.comment ? `<span class="text-gray-400">— "${a.comment}"</span>` : ''}
-                                <span class="text-xs text-gray-600 ml-auto">${getTimeAgo(a.created_at)}</span>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-            ` : ''}
-
-            <!-- Comments -->
-            ${comments.length ? `
-                <div class="bg-surface-100 rounded-lg p-4 border border-surface-300">
-                    <h3 class="text-sm font-semibold text-gray-400 mb-3">💬 Discussion</h3>
-                    <div class="space-y-3">
-                        ${comments.map(c => `
-                            <div class="flex gap-2">
-                                <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
-                                     style="background: ${getAvatarColor(c.user_name)}">${c.user_name[0].toUpperCase()}</div>
-                                <div>
-                                    <div class="flex items-center gap-2">
-                                        <span class="text-sm font-medium">${c.user_name}</span>
-                                        <span class="text-xs text-gray-600">${getTimeAgo(c.created_at)}</span>
-                                    </div>
-                                    <p class="text-sm text-gray-300">${c.content}</p>
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-            ` : ''}
+function updateConfidence(val) {
+    const bar = document.getElementById('confidence-bar');
+    if (!bar) return;
+    bar.classList.remove('hidden');
+    const pct = (val*100).toFixed(0);
+    const color = val > 0.85 ? 'green' : val > 0.5 ? 'amber' : 'red';
+    bar.innerHTML = `
+        <div class="flex items-center justify-between text-xs mb-1">
+            <span class="text-zinc-500">Agent Confidence</span>
+            <span class="font-mono font-bold text-${color}-400">${pct}%</span>
+        </div>
+        <div class="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+            <div class="h-full bg-${color}-500 rounded-full transition-all duration-700" style="width:${pct}%"></div>
+        </div>
+        <div class="flex justify-between text-[10px] text-zinc-700 mt-1">
+            <span>← Escalate (50%)</span>
+            <span>Auto-fix (85%) →</span>
         </div>
     `;
 }
 
 // ─── Actions ────────────────────────────────────────────────────────
-
-async function approveIncident(id, action) {
-    if (!currentUser) return alert('Please join first');
-    const comment = action === 'reject' ? prompt('Reason for rejection (optional):') || '' : '';
-
-    try {
-        await fetch(`/api/incidents/${id}/approve`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_name: currentUser, action, comment }),
-        });
-    } catch (e) {
-        console.error('Action failed:', e);
-    }
+function showActions() {
+    if (!currentUser) return;
+    const el = document.getElementById('action-buttons');
+    el.classList.remove('hidden');
+    el.innerHTML = `
+        <div class="flex gap-3 flex-wrap step-enter">
+            <button onclick="doApprove('approve')" class="bg-green-500/10 text-green-400 hover:bg-green-500/20 border border-green-500/20 px-6 py-3 rounded-xl font-semibold text-sm transition flex items-center gap-2">
+                ✅ Approve & Deploy
+            </button>
+            <button onclick="doApprove('reject')" class="bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 px-6 py-3 rounded-xl font-semibold text-sm transition flex items-center gap-2">
+                ❌ Reject
+            </button>
+            <button onclick="doOverride()" class="bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20 px-6 py-3 rounded-xl font-semibold text-sm transition flex items-center gap-2">
+                ✏️ Override Fix
+            </button>
+            <button onclick="doRequestChanges()" class="bg-zinc-800 text-zinc-400 hover:bg-zinc-700 border border-zinc-700 px-6 py-3 rounded-xl font-semibold text-sm transition flex items-center gap-2">
+                💬 Request Changes
+            </button>
+        </div>
+    `;
 }
 
-function showOverrideModal(id) {
+function hideActions() { document.getElementById('action-buttons').classList.add('hidden'); }
+
+function showResolved() {
+    hideActions();
+    // Switch health back visually
+    setTimeout(() => {
+        document.getElementById('health-dot').className = 'w-2.5 h-2.5 rounded-full bg-green-500';
+        document.getElementById('health-ring').className = 'absolute inset-0 w-2.5 h-2.5 rounded-full bg-green-500 pulse-ring';
+        document.getElementById('health-text').textContent = 'Healthy';
+        document.getElementById('health-text').className = 'text-zinc-400';
+    }, 1000);
+}
+
+async function doApprove(action) {
+    if (!currentIncident || !currentUser) return;
+    const comment = action === 'reject' ? (prompt('Reason?') || '') : '';
+    hideActions();
+    await fetch(`/api/incidents/${currentIncident.id}/approve`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ user_name: currentUser, action, comment }),
+    });
+}
+
+function doOverride() {
     const fix = prompt('Enter your override fix:');
-    if (fix) {
-        fetch(`/api/incidents/${id}/approve`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_name: currentUser, action: 'override', comment: fix }),
-        });
-    }
+    if (!fix || !currentIncident) return;
+    hideActions();
+    fetch(`/api/incidents/${currentIncident.id}/approve`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ user_name: currentUser, action:'override', comment: fix }),
+    });
 }
 
-function requestChanges(id) {
-    const feedback = prompt('What changes do you want the agent to make?');
-    if (feedback) {
-        fetch(`/api/incidents/${id}/approve`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_name: currentUser, action: 'request_changes', comment: feedback }),
-        });
-    }
+function doRequestChanges() {
+    const feedback = prompt('What changes should the agent make?');
+    if (!feedback || !currentIncident) return;
+    fetch(`/api/incidents/${currentIncident.id}/approve`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ user_name: currentUser, action:'request_changes', comment: feedback }),
+    });
+}
+
+// ─── Comments ───────────────────────────────────────────────────────
+function onNewComment(d) {
+    const list = document.getElementById('comments-list');
+    list.innerHTML += `
+        <div class="flex gap-2 step-enter">
+            <div class="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0" style="background:${avatarColor(d.user_name)}">${d.user_name[0].toUpperCase()}</div>
+            <div>
+                <span class="text-xs font-medium">${d.user_name}</span>
+                <span class="text-xs text-zinc-600 ml-1">${timeAgo(d.created_at)}</span>
+                <p class="text-sm text-zinc-300">${d.content}</p>
+            </div>
+        </div>`;
+    list.scrollTop = list.scrollHeight;
 }
 
 async function sendComment() {
-    if (!currentUser || !selectedIncidentId) return;
+    if (!currentUser || !currentIncident) return;
     const input = document.getElementById('comment-input');
     const content = input.value.trim();
     if (!content) return;
-
     input.value = '';
-    try {
-        await fetch(`/api/incidents/${selectedIncidentId}/comments`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_name: currentUser, content }),
-        });
-    } catch (e) {
-        console.error('Comment failed:', e);
-    }
+    await fetch(`/api/incidents/${currentIncident.id}/comments`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ user_name: currentUser, content }),
+    });
 }
 
 // ─── Activity Feed ──────────────────────────────────────────────────
-
-function renderActivityFeed(items = null) {
+function addActivity(d, silent=false) {
     const feed = document.getElementById('activity-feed');
-    const list = items || activities;
-
-    if (!list.length) {
-        feed.innerHTML = '<div class="text-center text-gray-600 text-sm py-4">No activity yet</div>';
-        return;
-    }
-
-    feed.innerHTML = list.slice(0, 50).map(a => {
-        const isAgent = a.actor === 'agent' || a.actor === 'system';
-        const color = isAgent ? '#6c5ce7' : getAvatarColor(a.actor);
-        const icon = getActivityIcon(a.action);
-
-        return `
-            <div class="flex gap-2 p-2 rounded hover:bg-surface-200 transition slide-in">
-                <div class="w-5 h-5 rounded-full flex items-center justify-center text-xs shrink-0"
-                     style="background: ${color}20; color: ${color}">
-                    ${isAgent ? '🤖' : a.actor[0].toUpperCase()}
-                </div>
-                <div class="flex-1 min-w-0">
-                    <div class="text-xs">
-                        <span class="font-medium text-gray-300">${a.actor}</span>
-                        <span class="text-gray-500 ml-1">${icon} ${a.action.replace(/_/g, ' ')}</span>
-                    </div>
-                    <div class="text-xs text-gray-600 truncate">${a.detail || ''}</div>
-                </div>
-                <div class="text-xs text-gray-700 shrink-0">${getTimeAgo(a.created_at)}</div>
-            </div>
-        `;
-    }).join('');
-
-    feed.scrollTop = 0;
-}
-
-function addActivity(data) {
-    activities.unshift(data);
-    if (!selectedIncidentId || data.incident_id === selectedIncidentId) {
-        renderActivityFeed();
-    }
-}
-
-function addCommentToFeed(data) {
-    addActivity({
-        actor: data.user_name,
-        action: 'commented',
-        detail: data.content,
-        created_at: data.created_at,
-        incident_id: data.incident_id,
-    });
-    // Refresh detail if viewing this incident
-    if (selectedIncidentId === data.incident_id) {
-        selectIncident(data.incident_id);
-    }
-}
-
-function getActivityIcon(action) {
+    if (feed.querySelector('.text-zinc-700')) feed.innerHTML = ''; // Clear placeholder
     const icons = {
-        incident_detected: '🚨', diagnosed: '🔍', fix_proposed: '🔧',
-        auto_deploying: '🚀', escalated: '⚠️', resolved: '✅',
-        approved: '👍', rejected: '👎', overridden: '✏️',
-        changes_requested: '💬', sandbox_test: '🧪', safety_check: '🛡️',
-        fix_refined: '🔄', learning_recorded: '📚', started: '▶️',
-        stopped: '⏹️', deploy_failed: '💥', fault_injected: '💥',
-        commented: '💬', error: '❌',
+        incident_detected:'🚨', diagnosed:'🔍', fix_proposed:'🔧', auto_deploying:'🚀',
+        escalated:'⚠️', resolved:'✅', approved:'👍', rejected:'👎', overridden:'✏️',
+        changes_requested:'💬', sandbox_test:'🧪', safety_check:'🛡️', fix_refined:'🔄',
+        learning_recorded:'📚', started:'▶️', stopped:'⏹️', fault_injected:'💥', commented:'💬',
     };
-    return icons[action] || '•';
+    const icon = icons[d.action] || '•';
+    const isAgent = d.actor === 'agent' || d.actor === 'system';
+    const el = document.createElement('div');
+    el.className = `flex items-start gap-2 py-1 text-xs ${silent ? '' : 'step-enter'}`;
+    el.innerHTML = `
+        <span class="shrink-0">${icon}</span>
+        <span class="${isAgent ? 'text-purple-400' : 'text-zinc-400'}">${d.actor}</span>
+        <span class="text-zinc-600 flex-1 truncate">${d.detail || d.action.replace(/_/g,' ')}</span>
+        <span class="text-zinc-700 shrink-0">${timeAgo(d.created_at)}</span>
+    `;
+    feed.prepend(el);
+    // Keep max 50
+    while (feed.children.length > 50) feed.lastChild.remove();
 }
 
 // ─── Presence ───────────────────────────────────────────────────────
-
-function updatePresence(data) {
-    const container = document.getElementById('online-users');
-    const users = data.online || [];
-    container.innerHTML = users.map(u => `
-        <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white border-2 border-surface-100 -ml-1 first:ml-0"
-             style="background: ${getAvatarColor(u)}" title="${u}">${u[0].toUpperCase()}</div>
+function updatePresence(d) {
+    const c = document.getElementById('online-users');
+    c.innerHTML = (d.online||[]).map(u => `
+        <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold -ml-1 first:ml-0 border-2 border-zinc-900" style="background:${avatarColor(u)}" title="${u}">${u[0].toUpperCase()}</div>
     `).join('');
-
-    // Show viewers on current incident
-    const viewers = document.getElementById('viewers');
-    if (selectedIncidentId && data.viewing) {
-        const viewingThis = Object.entries(data.viewing)
-            .filter(([_, incId]) => incId === selectedIncidentId)
-            .map(([user]) => user);
-        viewers.innerHTML = viewingThis.length ? `👁️ ${viewingThis.join(', ')}` : '';
-    }
 }
 
-function updateAgentStatus(data) {
-    const dot = document.getElementById('agent-dot');
-    const text = document.getElementById('agent-status-text');
-    if (data.running) {
-        dot.className = 'w-2 h-2 rounded-full bg-ok pulse-dot';
-        text.textContent = 'Agent Active';
-    } else {
-        dot.className = 'w-2 h-2 rounded-full bg-gray-500';
-        text.textContent = 'Agent Stopped';
-    }
-}
-
-function showTypingIndicator(data) {
-    // Could add typing bubble, keeping it simple for now
-}
-
-function updateAppHealth(data) {
-    const dot = document.getElementById('app-dot');
-    const text = document.getElementById('app-status-text');
-    if (data.healthy) {
-        dot.className = 'w-2 h-2 rounded-full bg-ok pulse-dot';
-        text.textContent = `App Healthy${data.response_time_ms ? ` (${Math.round(data.response_time_ms)}ms)` : ''}`;
-    } else {
-        dot.className = 'w-2 h-2 rounded-full bg-crit pulse-dot';
-        text.textContent = `App Down — ${data.error_type || data.error || 'Error'}`;
-    }
-}
-
-// ─── Fault Injection ────────────────────────────────────────────────
-
-function showInjectModal() {
-    document.getElementById('inject-modal').classList.remove('hidden');
-    document.getElementById('inject-modal').classList.add('flex');
-}
-
-function hideInjectModal() {
-    document.getElementById('inject-modal').classList.add('hidden');
-    document.getElementById('inject-modal').classList.remove('flex');
-}
-
-async function injectFault(faultType) {
-    hideInjectModal();
+// ─── Stats ──────────────────────────────────────────────────────────
+async function refreshStats() {
     try {
-        const res = await fetch('/api/inject', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fault_type: faultType }),
-        });
-        const data = await res.json();
-        addActivity({
-            actor: 'you', action: 'fault_injected',
-            detail: `💥 Injected "${faultType}" — ${data.detail || ''}`,
-            created_at: new Date().toISOString(),
-        });
-    } catch (e) {
-        console.error('Inject failed:', e);
-    }
+        const s = await fetch('/api/agent/status').then(r=>r.json());
+        updateStatsDisplay(s);
+    } catch(e){}
+}
+function updateStatsDisplay(s) {
+    document.getElementById('stat-total').textContent = s.incidents_total||0;
+    document.getElementById('stat-resolved').textContent = s.incidents_resolved||0;
+    document.getElementById('stat-auto').textContent = s.auto_resolved||0;
+    document.getElementById('stat-learning').textContent = s.learning_records||0;
+}
+
+// ─── Inject ─────────────────────────────────────────────────────────
+function showInjectModal() { const m=document.getElementById('inject-modal'); m.classList.remove('hidden'); m.classList.add('flex'); }
+function hideInjectModal() { const m=document.getElementById('inject-modal'); m.classList.add('hidden'); m.classList.remove('flex'); }
+
+async function injectFault(type) {
+    hideInjectModal();
+    // Reset view for new incident
+    currentIncident = null;
+    timelineSteps = [];
+    document.getElementById('timeline').innerHTML = '';
+    document.getElementById('action-buttons').classList.add('hidden');
+    document.getElementById('comments-list').innerHTML = '';
+    document.getElementById('empty-state').classList.add('hidden');
+    document.getElementById('incident-view').classList.remove('hidden');
+    document.getElementById('inc-header').innerHTML = `
+        <div class="flex items-center gap-2">
+            <div class="w-3 h-3 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+            <span class="text-sm text-zinc-400">Injecting fault and waiting for agent detection...</span>
+        </div>`;
+
+    try {
+        const res = await fetch('/api/inject', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({fault_type:type}) });
+        const d = await res.json();
+        addActivity({ actor:'you', action:'fault_injected', detail:`💥 ${type}: ${d.detail||''}`, created_at:new Date().toISOString() });
+    } catch(e) { console.error(e); }
 }
 
 // ─── Voice ──────────────────────────────────────────────────────────
-
-function playVoiceAlert(data) {
-    if (data.audio_b64) {
-        const player = document.getElementById('voice-player');
-        player.src = `data:audio/mpeg;base64,${data.audio_b64}`;
-        player.play().catch(() => {});
+function playVoice(d) {
+    if (d.audio_b64) {
+        const p = document.getElementById('voice-player');
+        p.src = `data:audio/mpeg;base64,${d.audio_b64}`;
+        p.play().catch(()=>{});
     }
-    // Show the script as a notification
-    addActivity({
-        actor: 'agent',
-        action: '🔊 voice_alert',
-        detail: data.script,
-        created_at: new Date().toISOString(),
-        incident_id: data.incident_id,
-    });
+    addActivity({ actor:'agent', action:'voice_alert', detail:`🔊 ${d.script||'Voice alert'}`, created_at:new Date().toISOString() });
 }
 
 async function fetchVoiceSummary() {
     try {
-        const res = await fetch('/api/voice/summary');
-        const data = await res.json();
-        if (data.audio_b64) {
-            const player = document.getElementById('voice-player');
-            player.src = `data:audio/mpeg;base64,${data.audio_b64}`;
-            player.play();
+        const d = await fetch('/api/voice/summary').then(r=>r.json());
+        if (d.audio_b64) {
+            const p = document.getElementById('voice-player');
+            p.src = `data:audio/mpeg;base64,${d.audio_b64}`;
+            p.play();
         }
-        addActivity({
-            actor: 'agent',
-            action: '🔊 voice_summary',
-            detail: data.script,
-            created_at: new Date().toISOString(),
-        });
-    } catch (e) {
-        console.error('Voice summary failed:', e);
-    }
+        addActivity({ actor:'agent', action:'voice_summary', detail:`🔊 ${d.script}`, created_at:new Date().toISOString() });
+    } catch(e) { console.error(e); }
 }
 
-// ─── Utilities ──────────────────────────────────────────────────────
-
-function getTimeAgo(timestamp) {
-    if (!timestamp) return '';
-    const now = new Date();
-    const then = new Date(timestamp);
-    const diff = Math.floor((now - then) / 1000);
-    if (diff < 5) return 'now';
-    if (diff < 60) return `${diff}s`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-    return `${Math.floor(diff / 86400)}d`;
-}
-
-function formatTime(timestamp) {
-    if (!timestamp) return '';
-    return new Date(timestamp).toLocaleTimeString();
-}
-
-// Auto-refresh stats every 10s
+// Auto-refresh
 setInterval(refreshStats, 10000);

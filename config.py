@@ -2,7 +2,7 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)  # Override system env vars with .env values
 
 # Server
 HOST = os.getenv("HOST", "0.0.0.0")

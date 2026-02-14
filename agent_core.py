@@ -65,6 +65,17 @@ class AgentOps:
             if fault_type in self._active_incidents:
                 return
 
+            # Also check DB for any unresolved incidents (belt + suspenders)
+            db = SessionLocal()
+            try:
+                open_count = db.query(Incident).filter(
+                    Incident.status.notin_(["resolved", "rejected"])
+                ).count()
+                if open_count > 0:
+                    return
+            finally:
+                db.close()
+
             await self._handle_issue(health, fault_type)
 
     def _classify_fault(self, health: Dict) -> str:

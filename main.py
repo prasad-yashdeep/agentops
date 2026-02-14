@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from db import init_db, SessionLocal, Incident, Approval, Comment, ActivityLog, LearningRecord, gen_id
 from schemas import IncidentOut, ApprovalCreate, CommentCreate, CommentOut, ApprovalOut, ActivityOut, FaultInject
-from monitored_app import app_instance
+from monitored_app import app_instance, TARGET_PORT
 from agent_core import agent
 from ws_manager import manager
 from voice_alerts import voice_alerts
@@ -24,6 +24,7 @@ async def lifespan(app: FastAPI):
     agent_task = asyncio.create_task(agent.start())
     yield
     await agent.stop()
+    await app_instance.stop()
     agent_task.cancel()
 
 
@@ -159,25 +160,31 @@ async def get_activity(incident_id: str | None = None, limit: int = 100):
 
 @app.post("/api/inject")
 async def inject_fault(body: FaultInject):
-    result = app_instance.inject_fault(body.fault_type, body.service or "api")
+    result = await app_instance.inject_fault(body.fault_type)
     await manager.broadcast("fault_injected", result)
     return result
 
 
-@app.post("/api/clear/{service}")
-async def clear_fault(service: str):
-    result = app_instance.clear_fault(service)
+@app.post("/api/clear")
+async def clear_faults():
+    result = await app_instance.apply_fix(app_instance.active_fault or "unknown")
     return result
 
 
 @app.get("/api/health")
 async def get_health():
-    return app_instance.get_health()
+    return await app_instance.health_check()
 
 
-@app.get("/api/services")
-async def get_services():
-    return list(app_instance.services.keys())
+@app.get("/api/target-app")
+async def target_app_info():
+    return {
+        "running": app_instance.is_running(),
+        "port": TARGET_PORT,
+        "url": f"http://localhost:{TARGET_PORT}",
+        "active_fault": app_instance.active_fault,
+        "logs_tail": app_instance.get_logs(limit=10),
+    }
 
 
 # ─── Agent Status ────────────────────────────────────────────────────

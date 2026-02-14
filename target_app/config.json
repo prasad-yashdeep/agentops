@@ -1,0 +1,11 @@
+{
+    "version": "1.0.0",
+    "database_url": "postgresql://admin:secret@db.internal:5432/production",
+    "cache_ttl": 300,
+    "max_connections": 50,
+    "debug": false,
+    "feature_flags": {
+        "new_dashboard": true,
+        "beta_api": false
+    }
+}

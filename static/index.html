@@ -57,6 +57,11 @@
                 </div>
             </div>
             <div class="flex items-center gap-4">
+                <!-- App Health -->
+                <div id="app-badge" class="flex items-center gap-2 bg-surface-200 px-3 py-1.5 rounded-full text-xs">
+                    <span id="app-dot" class="w-2 h-2 rounded-full bg-ok pulse-dot"></span>
+                    <span id="app-status-text">App Healthy</span>
+                </div>
                 <!-- Agent Status -->
                 <div id="agent-badge" class="flex items-center gap-2 bg-surface-200 px-3 py-1.5 rounded-full text-xs">
                     <span id="agent-dot" class="w-2 h-2 rounded-full bg-ok pulse-dot"></span>
@@ -157,37 +162,24 @@
     <div id="inject-modal" class="fixed inset-0 bg-black/60 hidden items-center justify-center z-50" onclick="if(event.target===this)hideInjectModal()">
         <div class="bg-surface-100 border border-surface-300 rounded-xl p-6 w-96 glow">
             <h3 class="text-lg font-bold mb-4">💥 Inject Fault</h3>
-            <div class="space-y-3">
-                <div>
-                    <label class="text-xs text-gray-400 mb-1 block">Service</label>
-                    <select id="inject-service" class="w-full bg-surface-200 border border-surface-300 rounded px-3 py-2 text-sm outline-none">
-                        <option value="api">API</option>
-                        <option value="database">Database</option>
-                        <option value="auth">Auth</option>
-                        <option value="cache">Cache</option>
-                        <option value="worker">Worker</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="text-xs text-gray-400 mb-1 block">Fault Type</label>
-                    <div class="grid grid-cols-1 gap-2">
-                        <button onclick="injectFault('crash')" class="bg-crit/20 text-crit hover:bg-crit/30 px-3 py-2 rounded text-sm text-left transition">
-                            💀 Crash — Process killed (OOMKilled)
-                        </button>
-                        <button onclick="injectFault('slow')" class="bg-warn/20 text-warn hover:bg-warn/30 px-3 py-2 rounded text-sm text-left transition">
-                            🐌 Slow — 5s response time, pool exhausted
-                        </button>
-                        <button onclick="injectFault('bad_config')" class="bg-danger/20 text-danger hover:bg-danger/30 px-3 py-2 rounded text-sm text-left transition">
-                            ⚙️ Bad Config — Invalid DATABASE_URL
-                        </button>
-                        <button onclick="injectFault('memory_leak')" class="bg-warn/20 text-warn hover:bg-warn/30 px-3 py-2 rounded text-sm text-left transition">
-                            📈 Memory Leak — 92% memory usage
-                        </button>
-                        <button onclick="injectFault('dependency_down')" class="bg-danger/20 text-danger hover:bg-danger/30 px-3 py-2 rounded text-sm text-left transition">
-                            🔗 Dependency Down — Upstream 503
-                        </button>
-                    </div>
-                </div>
+            <p class="text-xs text-gray-500 mb-3">These inject REAL faults — modifying actual source files and killing real processes.</p>
+            <div class="grid grid-cols-1 gap-2">
+                <button onclick="injectFault('crash')" class="bg-crit/20 text-crit hover:bg-crit/30 px-4 py-3 rounded text-sm text-left transition">
+                    <div class="font-semibold">💀 Kill Process</div>
+                    <div class="text-xs opacity-70 mt-0.5">Kills the running app process. Agent must detect and restart it.</div>
+                </button>
+                <button onclick="injectFault('bad_config')" class="bg-danger/20 text-danger hover:bg-danger/30 px-4 py-3 rounded text-sm text-left transition">
+                    <div class="font-semibold">⚙️ Corrupt Config</div>
+                    <div class="text-xs opacity-70 mt-0.5">Writes invalid JSON to config.json. App returns 500 on every request.</div>
+                </button>
+                <button onclick="injectFault('bug')" class="bg-danger/20 text-danger hover:bg-danger/30 px-4 py-3 rounded text-sm text-left transition">
+                    <div class="font-semibold">🐛 Inject Code Bug</div>
+                    <div class="text-xs opacity-70 mt-0.5">Replaces handler.py with a buggy version (NameError + ZeroDivisionError).</div>
+                </button>
+                <button onclick="injectFault('slow')" class="bg-warn/20 text-warn hover:bg-warn/30 px-4 py-3 rounded text-sm text-left transition">
+                    <div class="font-semibold">🐌 Inject Slowdown</div>
+                    <div class="text-xs opacity-70 mt-0.5">Adds time.sleep(8) to all handlers. Health check times out.</div>
+                </button>
             </div>
             <button onclick="hideInjectModal()" class="mt-4 w-full bg-surface-200 hover:bg-surface-300 py-2 rounded text-sm transition">Cancel</button>
         </div>

@@ -74,10 +74,13 @@ function handleWSMessage(msg) {
         case 'voice_alert':
             playVoiceAlert(msg.data);
             break;
+        case 'health_update':
+            updateAppHealth(msg.data);
+            break;
         case 'fault_injected':
             addActivity({
                 actor: 'system', action: 'fault_injected',
-                detail: `${msg.data.injected} fault injected into ${msg.data.service}`,
+                detail: `💥 ${msg.data.fault} fault injected — ${msg.data.detail || ''}`,
                 created_at: new Date().toISOString(),
             });
             break;
@@ -607,6 +610,18 @@ function showTypingIndicator(data) {
     // Could add typing bubble, keeping it simple for now
 }
 
+function updateAppHealth(data) {
+    const dot = document.getElementById('app-dot');
+    const text = document.getElementById('app-status-text');
+    if (data.healthy) {
+        dot.className = 'w-2 h-2 rounded-full bg-ok pulse-dot';
+        text.textContent = `App Healthy${data.response_time_ms ? ` (${Math.round(data.response_time_ms)}ms)` : ''}`;
+    } else {
+        dot.className = 'w-2 h-2 rounded-full bg-crit pulse-dot';
+        text.textContent = `App Down — ${data.error_type || data.error || 'Error'}`;
+    }
+}
+
 // ─── Fault Injection ────────────────────────────────────────────────
 
 function showInjectModal() {
@@ -620,13 +635,18 @@ function hideInjectModal() {
 }
 
 async function injectFault(faultType) {
-    const service = document.getElementById('inject-service').value;
     hideInjectModal();
     try {
-        await fetch('/api/inject', {
+        const res = await fetch('/api/inject', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fault_type: faultType, service }),
+            body: JSON.stringify({ fault_type: faultType }),
+        });
+        const data = await res.json();
+        addActivity({
+            actor: 'you', action: 'fault_injected',
+            detail: `💥 Injected "${faultType}" — ${data.detail || ''}`,
+            created_at: new Date().toISOString(),
         });
     } catch (e) {
         console.error('Inject failed:', e);

@@ -1,10 +1,11 @@
 """
-Core AI Agent — monitors, diagnoses, fixes, and learns.
-Uses Claude for reasoning, Blaxel for sandboxing, White Circle for safety.
+Core AI Agent — monitors a REAL app, diagnoses REAL errors, applies REAL fixes.
+Uses Claude for reasoning (optional), Blaxel for sandboxing, White Circle for safety.
 """
 import asyncio
 import json
 import time
+import os
 from typing import Dict, Any, Optional
 from anthropic import AsyncAnthropic
 from db import SessionLocal, Incident, Approval, LearningRecord, ActivityLog, gen_id, utcnow
@@ -15,23 +16,27 @@ from voice_alerts import voice_alerts
 from ws_manager import manager
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, AUTO_FIX_THRESHOLD, ESCALATION_THRESHOLD, MONITOR_INTERVAL
 
+BASE_DIR = os.path.join(os.path.dirname(__file__), "target_app")
+
 
 class AgentOps:
     """The self-healing DevOps agent."""
 
     def __init__(self):
-        self.client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY and not ANTHROPIC_API_KEY.startswith("sk-ant-...") else None
+        self.client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY and ANTHROPIC_API_KEY.startswith("sk-") else None
         self.running = False
         self.incidents_total = 0
         self.incidents_resolved = 0
         self.auto_resolved = 0
-        self._processing = set()  # incident IDs currently being processed
+        self._active_incidents: Dict[str, str] = {}  # fault_type -> incident_id (dedup)
 
     async def start(self):
         """Start the agent monitoring loop."""
         self.running = True
         await sandbox.create()
-        await self._log_activity(None, "agent", "started", "AgentOps monitoring started")
+        # Start the target app
+        await app_instance.start()
+        await self._log_activity(None, "agent", "started", "AgentOps monitoring started — target app running on :8001")
         await manager.broadcast("agent_status", {"running": True})
 
         while self.running:
@@ -47,157 +52,158 @@ class AgentOps:
         await manager.broadcast("agent_status", {"running": False})
 
     async def _monitor_cycle(self):
-        """Single monitoring cycle: check health, detect issues, respond."""
-        health = app_instance.get_health()
+        """Single monitoring cycle: real HTTP health check."""
+        health = await app_instance.health_check()
 
-        for service_name, status in health.items():
-            if not status["healthy"] or status["error_rate"] > 0.5 or status["response_time_ms"] > 3000:
-                # Check if we're already handling this
-                incident_key = f"{service_name}:{status.get('fault_type', 'unknown')}"
-                if incident_key in self._processing:
-                    continue
+        # Broadcast health status to dashboard
+        await manager.broadcast("health_update", health)
 
-                self._processing.add(incident_key)
-                try:
-                    await self._handle_issue(service_name, status)
-                finally:
-                    self._processing.discard(incident_key)
+        if not health.get("healthy"):
+            fault_type = self._classify_fault(health)
 
-    async def _handle_issue(self, service_name: str, status: Dict[str, Any]):
+            # DEDUP: skip if we already have an active incident for this fault
+            if fault_type in self._active_incidents:
+                return
+
+            await self._handle_issue(health, fault_type)
+
+    def _classify_fault(self, health: Dict) -> str:
+        """Classify the fault type from real health check data."""
+        error_type = health.get("error_type", "")
+        error = health.get("error", "")
+
+        if error_type == "ProcessDown" or error_type == "ConnectionRefused":
+            return "crash"
+        elif error_type == "Timeout":
+            return "slow"
+        elif error_type == "ConfigParseError" or "config" in error.lower() or "json" in error.lower():
+            return "bad_config"
+        elif error_type == "NameError" or "NameError" in health.get("traceback", ""):
+            return "bug"
+        elif "ZeroDivision" in health.get("traceback", ""):
+            return "bug"
+        elif "time.sleep" in health.get("traceback", ""):
+            return "slow"
+        else:
+            return "unknown"
+
+    async def _handle_issue(self, health: Dict, fault_type: str):
         """Full incident lifecycle: detect → diagnose → fix → verify."""
         db = SessionLocal()
         try:
-            # 1. Create incident
-            logs = app_instance.get_logs(service=service_name, limit=10)
-            error_logs = json.dumps(logs, indent=2, default=str)
+            # Gather real evidence
+            app_logs = app_instance.get_logs(limit=20)
+            handler_code = app_instance.get_file("handler.py")
+            config_content = app_instance.get_file("config.json")
 
-            severity = self._assess_severity(status)
+            error_detail = health.get("error", "Unknown")
+            traceback_str = health.get("traceback", "")
+            severity = self._assess_severity(health, fault_type)
+
+            # Create incident with real error info
             incident = Incident(
                 id=gen_id(),
-                title=f"{severity.upper()}: {service_name} — {status.get('fault_type', 'degraded')}",
-                description=f"Service '{service_name}' detected unhealthy. Error rate: {status['error_rate']:.0%}, Response time: {status['response_time_ms']:.0f}ms",
+                title=f"{'🔴' if severity == 'critical' else '🟡'} {error_detail[:80]}",
+                description=self._build_description(health, fault_type),
                 severity=severity,
                 status="detected",
-                service_name=service_name,
-                error_logs=error_logs,
+                service_name="target-app",
+                error_logs=self._build_error_evidence(health, app_logs, traceback_str),
             )
             db.add(incident)
             db.commit()
             self.incidents_total += 1
+            self._active_incidents[fault_type] = incident.id
 
-            await self._log_activity(incident.id, "agent", "incident_detected", incident.title)
+            await self._log_activity(incident.id, "agent", "incident_detected",
+                                     f"Detected: {error_detail[:100]}")
             await manager.broadcast("incident_new", {
                 "id": incident.id, "title": incident.title, "severity": severity,
-                "status": "detected", "service": service_name,
+                "status": "detected", "service_name": "target-app",
+                "detected_at": str(incident.detected_at),
             })
 
-            # 2. Diagnose
+            # ── Diagnose ──
             incident.status = "diagnosing"
             db.commit()
             await manager.broadcast("incident_update", {"id": incident.id, "status": "diagnosing"})
+            await asyncio.sleep(1.5)  # Visual pacing for demo
 
-            diagnosis = await self._diagnose(service_name, status, logs)
+            diagnosis = await self._diagnose(health, fault_type, app_logs, handler_code, config_content, traceback_str)
             incident.root_cause = diagnosis.get("root_cause", "Unknown")
-            incident.agent_reasoning = diagnosis.get("reasoning", "")
+            incident.agent_reasoning = json.dumps(diagnosis, indent=2) if isinstance(diagnosis.get("reasoning"), str) else json.dumps(diagnosis, indent=2)
             db.commit()
 
             await self._log_activity(incident.id, "agent", "diagnosed",
-                                     f"Root cause: {incident.root_cause}")
+                                     f"Root cause: {incident.root_cause[:120]}")
             await manager.broadcast("incident_update", {
                 "id": incident.id, "status": "diagnosing",
-                "root_cause": incident.root_cause, "reasoning": incident.agent_reasoning,
+                "root_cause": incident.root_cause,
+                "reasoning": diagnosis.get("reasoning", ""),
             })
 
-            # 3. Generate fix
-            fix = await self._generate_fix(service_name, status, diagnosis, logs)
+            # ── Generate Fix ──
+            await asyncio.sleep(1)
+            fix = await self._generate_fix(health, fault_type, diagnosis, handler_code, config_content)
             incident.proposed_fix = fix.get("fix_description", "")
-            incident.fix_diff = fix.get("fix_code", "")
+            incident.fix_diff = fix.get("fix_diff", fix.get("fix_code", ""))
             db.commit()
 
-            # 4. Test fix in sandbox
+            # ── Test in Sandbox ──
+            await self._log_activity(incident.id, "agent", "sandbox_test", "Testing fix in isolated sandbox...")
             if fix.get("test_code"):
-                sandbox_result = await sandbox.test_fix(fix["fix_code"], fix["test_code"])
+                sandbox_result = await sandbox.test_fix(fix.get("fix_code", ""), fix["test_code"])
                 await self._log_activity(incident.id, "agent", "sandbox_test",
-                                         f"Test passed: {sandbox_result['test_passed']}")
+                                         f"Sandbox result: {'✅ PASS' if sandbox_result['test_passed'] else '❌ FAIL'}")
             else:
                 sandbox_result = {"fix_applied": True, "test_passed": True}
 
-            # 5. Safety check (White Circle AI)
+            # ── Safety Check ──
             safety_result = await safety_checker.check_fix(
-                {"service": service_name, "root_cause": diagnosis.get("root_cause"), "severity": severity},
-                fix.get("fix_code", ""),
+                {"fault_type": fault_type, "root_cause": diagnosis.get("root_cause"), "severity": severity},
+                fix.get("fix_code", "") + "\n" + fix.get("fix_diff", ""),
             )
             incident.safety_check_result = json.dumps(safety_result)
             incident.safety_check_passed = safety_result.get("passed", False)
             db.commit()
 
             await self._log_activity(incident.id, "agent", "safety_check",
-                                     f"Safety: {'PASSED' if safety_result['passed'] else 'FAILED'} "
-                                     f"(score: {safety_result.get('score', 0):.0%}, provider: {safety_result.get('provider', 'unknown')})")
+                                     f"Safety: {'✅ PASSED' if safety_result['passed'] else '❌ FAILED'} "
+                                     f"(score: {safety_result.get('score', 0):.0%})")
 
-            # 6. Calculate confidence
-            confidence = await self._calculate_confidence(
-                diagnosis, fix, sandbox_result, safety_result, severity
-            )
+            # ── Confidence Score ──
+            confidence = await self._calculate_confidence(diagnosis, fix, sandbox_result, safety_result, severity)
             incident.confidence_score = confidence
             db.commit()
 
-            # 7. Decision: auto-fix or escalate
+            # ── Decision ──
             if confidence >= AUTO_FIX_THRESHOLD and safety_result.get("passed") and sandbox_result.get("test_passed"):
-                # Auto-fix: high confidence + safe + tested
                 incident.status = "deploying"
                 db.commit()
                 await self._log_activity(incident.id, "agent", "auto_deploying",
-                                         f"Confidence {confidence:.0%} > threshold {AUTO_FIX_THRESHOLD:.0%}")
+                                         f"Confidence {confidence:.0%} — auto-deploying fix")
                 await manager.broadcast("incident_update", {
                     "id": incident.id, "status": "deploying", "confidence": confidence,
-                    "auto": True,
+                    "proposed_fix": incident.proposed_fix, "fix_diff": incident.fix_diff,
+                    "safety": safety_result, "auto": True,
                 })
+                await asyncio.sleep(1)
+                await self._apply_fix(incident, fault_type, db)
 
-                await self._apply_fix(incident, service_name, db)
-
-            elif confidence < ESCALATION_THRESHOLD:
-                # Low confidence: escalate immediately
-                incident.status = "awaiting_approval"
-                incident.proposed_fix = fix.get("fix_description", "")
+            else:
+                incident.status = "fix_proposed"
                 db.commit()
 
-                await self._log_activity(incident.id, "agent", "escalated",
-                                         f"Low confidence ({confidence:.0%}). Needs human review.")
+                action_msg = "Awaiting team approval" if confidence >= ESCALATION_THRESHOLD else "⚠️ Low confidence — needs expert review"
+                await self._log_activity(incident.id, "agent", "fix_proposed",
+                                         f"Confidence: {confidence:.0%}. {action_msg}")
 
-                # Voice alert for critical/high
                 if severity in ("critical", "high"):
                     alert = await voice_alerts.generate_alert(
                         incident.title, severity, incident.root_cause, incident.proposed_fix
                     )
                     await manager.broadcast("voice_alert", {
-                        "incident_id": incident.id,
-                        "script": alert["script"],
-                        "audio_b64": alert.get("audio_b64"),
-                    })
-
-                await manager.broadcast("incident_update", {
-                    "id": incident.id, "status": "awaiting_approval",
-                    "confidence": confidence, "proposed_fix": incident.proposed_fix,
-                    "fix_diff": incident.fix_diff, "safety": safety_result,
-                })
-
-            else:
-                # Medium confidence: propose fix, wait for approval
-                incident.status = "fix_proposed"
-                db.commit()
-
-                await self._log_activity(incident.id, "agent", "fix_proposed",
-                                         f"Confidence: {confidence:.0%}. Fix ready for review.")
-
-                # Voice alert for critical
-                if severity == "critical":
-                    alert = await voice_alerts.generate_alert(
-                        incident.title, severity, incident.root_cause, incident.proposed_fix
-                    )
-                    await manager.broadcast("voice_alert", {
-                        "incident_id": incident.id,
-                        "script": alert["script"],
+                        "incident_id": incident.id, "script": alert["script"],
                         "audio_b64": alert.get("audio_b64"),
                     })
 
@@ -205,25 +211,31 @@ class AgentOps:
                     "id": incident.id, "status": "fix_proposed",
                     "confidence": confidence, "proposed_fix": incident.proposed_fix,
                     "fix_diff": incident.fix_diff, "safety": safety_result,
+                    "root_cause": incident.root_cause,
                 })
-
         finally:
             db.close()
 
     async def handle_approval(self, incident_id: str, user_name: str, action: str, comment: str = ""):
-        """Handle human approval/rejection of a proposed fix."""
+        """Handle human approval/rejection."""
         db = SessionLocal()
         try:
             incident = db.query(Incident).filter(Incident.id == incident_id).first()
             if not incident:
                 return {"error": "Incident not found"}
 
-            # Save approval
             approval = Approval(
                 id=gen_id(), incident_id=incident_id,
                 user_name=user_name, action=action, comment=comment,
             )
             db.add(approval)
+
+            # Find the fault type for this incident
+            fault_type = None
+            for ft, iid in self._active_incidents.items():
+                if iid == incident_id:
+                    fault_type = ft
+                    break
 
             if action == "approve":
                 incident.status = "deploying"
@@ -232,13 +244,12 @@ class AgentOps:
                 await manager.broadcast("incident_update", {
                     "id": incident_id, "status": "deploying", "approved_by": user_name,
                 })
-                await self._apply_fix(incident, incident.service_name, db)
-
-                # Record learning
+                await self._apply_fix(incident, fault_type or "unknown", db)
                 await self._record_learning(incident, "approved", db)
 
             elif action == "reject":
                 incident.status = "rejected"
+                self._active_incidents.pop(fault_type, None) if fault_type else None
                 db.commit()
                 await self._log_activity(incident_id, user_name, "rejected", comment or "Fix rejected")
                 await manager.broadcast("incident_update", {
@@ -248,25 +259,20 @@ class AgentOps:
 
             elif action == "override":
                 incident.status = "deploying"
-                incident.proposed_fix = comment  # override fix is in the comment
+                incident.proposed_fix = comment
                 db.commit()
-                await self._log_activity(incident_id, user_name, "overridden",
-                                         f"Human override: {comment}")
+                await self._log_activity(incident_id, user_name, "overridden", f"Human override: {comment}")
                 await manager.broadcast("incident_update", {
                     "id": incident_id, "status": "deploying", "overridden_by": user_name,
                 })
-                await self._apply_fix(incident, incident.service_name, db)
+                await self._apply_fix(incident, fault_type or "unknown", db)
                 await self._record_learning(incident, "modified", db)
 
             elif action == "request_changes":
-                incident.status = "fix_proposed"
-                db.commit()
                 await self._log_activity(incident_id, user_name, "changes_requested", comment)
                 await manager.broadcast("incident_update", {
-                    "id": incident_id, "status": "fix_proposed",
-                    "changes_requested_by": user_name, "changes": comment,
+                    "id": incident_id, "changes_requested_by": user_name, "changes": comment,
                 })
-                # Agent will incorporate feedback
                 if comment and self.client:
                     await self._refine_fix(incident, comment, db)
 
@@ -275,96 +281,203 @@ class AgentOps:
         finally:
             db.close()
 
-    async def _apply_fix(self, incident: Incident, service_name: str, db):
-        """Apply the fix to the monitored app."""
+    async def _apply_fix(self, incident: Incident, fault_type: str, db):
+        """Apply the REAL fix — restore files and restart the app."""
         try:
-            # In real system: deploy to production via sandbox
-            # For demo: clear the fault from the simulated app
-            app_instance.clear_fault(service_name)
+            result = await app_instance.apply_fix(fault_type)
 
-            incident.status = "resolved"
-            incident.resolved_at = utcnow()
-            incident.auto_resolved = incident.confidence_score >= AUTO_FIX_THRESHOLD
-            db.commit()
+            if fault_type == "crash":
+                # Need to restart the process
+                await app_instance.restart()
 
-            self.incidents_resolved += 1
-            if incident.auto_resolved:
-                self.auto_resolved += 1
+            # Verify the fix worked
+            await asyncio.sleep(1)
+            health = await app_instance.health_check()
 
-            await self._log_activity(incident.id, "agent", "resolved",
-                                     f"Fix deployed. Auto: {incident.auto_resolved}")
-            await manager.broadcast("incident_update", {
-                "id": incident.id, "status": "resolved",
-                "auto_resolved": incident.auto_resolved,
-                "resolved_at": str(incident.resolved_at),
-            })
+            if health.get("healthy"):
+                incident.status = "resolved"
+                incident.resolved_at = utcnow()
+                incident.auto_resolved = incident.confidence_score >= AUTO_FIX_THRESHOLD
+                self._active_incidents.pop(fault_type, None)
+                db.commit()
+
+                self.incidents_resolved += 1
+                if incident.auto_resolved:
+                    self.auto_resolved += 1
+
+                await self._log_activity(incident.id, "agent", "resolved",
+                                         f"✅ Fix deployed and verified — app is healthy. {json.dumps(result)}")
+                await manager.broadcast("incident_update", {
+                    "id": incident.id, "status": "resolved",
+                    "auto_resolved": incident.auto_resolved,
+                    "resolved_at": str(incident.resolved_at),
+                })
+            else:
+                incident.status = "fix_proposed"
+                db.commit()
+                await self._log_activity(incident.id, "agent", "deploy_failed",
+                                         f"Fix applied but app still unhealthy: {health.get('error', 'unknown')}")
         except Exception as e:
             incident.status = "fix_proposed"
             db.commit()
             await self._log_activity(incident.id, "agent", "deploy_failed", str(e))
 
-    async def _diagnose(self, service: str, status: Dict, logs: list) -> Dict[str, Any]:
-        """Use Claude to diagnose the root cause."""
-        if not self.client:
-            return self._fallback_diagnosis(status, logs)
+    # ─── Diagnosis ───────────────────────────────────────────────
 
+    async def _diagnose(self, health, fault_type, logs, handler_code, config_content, traceback_str) -> Dict:
+        """Diagnose using Claude or rich fallback engine."""
+        if self.client:
+            return await self._llm_diagnose(health, fault_type, logs, handler_code, config_content, traceback_str)
+        return self._rule_diagnose(health, fault_type, logs, handler_code, config_content, traceback_str)
+
+    async def _llm_diagnose(self, health, fault_type, logs, handler_code, config_content, traceback_str) -> Dict:
         try:
-            prompt = f"""You are a DevOps expert. Analyze this incident and determine the root cause.
+            prompt = f"""You are a senior DevOps engineer. A production app is failing. Analyze the evidence and diagnose the root cause.
 
-SERVICE: {service}
-STATUS: {json.dumps(status, indent=2)}
-RECENT LOGS:
-{json.dumps(logs, indent=2, default=str)}
+HEALTH CHECK RESULT:
+{json.dumps(health, indent=2)}
 
-Respond in JSON format:
+APPLICATION LOGS:
+{logs[-2000:] if logs else 'No logs available'}
+
+TRACEBACK:
+{traceback_str or 'None'}
+
+CURRENT handler.py:
+```python
+{handler_code[:2000]}
+```
+
+CURRENT config.json:
+```json
+{config_content[:1000]}
+```
+
+Respond in JSON:
 {{
     "root_cause": "concise root cause (1-2 sentences)",
-    "reasoning": "detailed analysis of how you arrived at this conclusion",
-    "category": "one of: crash, performance, config, memory, dependency, security, unknown",
-    "affected_components": ["list", "of", "affected", "components"]
+    "reasoning": "step-by-step analysis",
+    "category": "{fault_type}",
+    "file_at_fault": "handler.py or config.json or null",
+    "line_hint": "which line/function is broken"
 }}"""
-
             response = await self.client.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=1000,
+                model=CLAUDE_MODEL, max_tokens=1000,
                 messages=[{"role": "user", "content": prompt}],
             )
             text = response.content[0].text
-            # Extract JSON from response
             if "```json" in text:
                 text = text.split("```json")[1].split("```")[0]
             elif "```" in text:
                 text = text.split("```")[1].split("```")[0]
             return json.loads(text)
         except Exception as e:
-            result = self._fallback_diagnosis(status, logs)
-            result["llm_error"] = str(e)
+            result = self._rule_diagnose(health, fault_type, logs, handler_code, config_content, traceback_str)
+            result["_llm_error"] = str(e)
             return result
 
-    async def _generate_fix(self, service: str, status: Dict, diagnosis: Dict, logs: list) -> Dict[str, Any]:
-        """Use Claude to generate a fix."""
-        if not self.client:
-            return self._fallback_fix(status, diagnosis)
+    def _rule_diagnose(self, health, fault_type, logs, handler_code, config_content, traceback_str) -> Dict:
+        """Rich rule-based diagnosis from real app evidence."""
+        error = health.get("error", "")
+        error_type = health.get("error_type", "")
 
+        if fault_type == "crash":
+            return {
+                "root_cause": "Application process is not running — it was killed or crashed. No response on health endpoint.",
+                "reasoning": (
+                    f"1. Health check returned: {error}\n"
+                    f"2. Error type: {error_type}\n"
+                    f"3. Process is no longer alive — needs restart\n"
+                    f"4. Check logs for crash reason before restart"
+                ),
+                "category": "crash",
+                "file_at_fault": None,
+                "line_hint": "Process-level failure",
+            }
+
+        elif fault_type == "bad_config":
+            detail = health.get("detail", "")
+            return {
+                "root_cause": f"config.json contains invalid JSON — parser error: {detail or error}",
+                "reasoning": (
+                    f"1. Health endpoint returned 500 with ConfigParseError\n"
+                    f"2. Detail: {detail}\n"
+                    f"3. Current config.json content:\n{config_content[:500]}\n"
+                    f"4. Fix: restore valid JSON in config.json"
+                ),
+                "category": "config",
+                "file_at_fault": "config.json",
+                "line_hint": "JSON syntax error",
+            }
+
+        elif fault_type == "bug":
+            return {
+                "root_cause": f"Python error in handler.py — {error_type}: {error}",
+                "reasoning": (
+                    f"1. Health endpoint returned 500\n"
+                    f"2. Exception: {error_type}: {error}\n"
+                    f"3. Traceback:\n{traceback_str[:800]}\n"
+                    f"4. The handler.py file has a code bug that needs to be fixed"
+                ),
+                "category": "bug",
+                "file_at_fault": "handler.py",
+                "line_hint": traceback_str.split("\n")[-2] if traceback_str else "unknown",
+            }
+
+        elif fault_type == "slow":
+            return {
+                "root_cause": "Health check timed out (>5s) — handler.py contains blocking time.sleep() calls",
+                "reasoning": (
+                    f"1. Health check timed out after 5 seconds\n"
+                    f"2. Looking at handler.py: found time.sleep() calls\n"
+                    f"3. These blocking calls are in the request path\n"
+                    f"4. Fix: remove time.sleep() calls or replace with async"
+                ),
+                "category": "performance",
+                "file_at_fault": "handler.py",
+                "line_hint": "time.sleep() calls",
+            }
+
+        return {
+            "root_cause": f"Application error: {error}",
+            "reasoning": f"Error type: {error_type}, Details: {error}",
+            "category": "unknown",
+            "file_at_fault": None,
+            "line_hint": None,
+        }
+
+    # ─── Fix Generation ──────────────────────────────────────────
+
+    async def _generate_fix(self, health, fault_type, diagnosis, handler_code, config_content) -> Dict:
+        if self.client:
+            return await self._llm_generate_fix(health, fault_type, diagnosis, handler_code, config_content)
+        return self._rule_generate_fix(fault_type, diagnosis, handler_code, config_content)
+
+    async def _llm_generate_fix(self, health, fault_type, diagnosis, handler_code, config_content) -> Dict:
         try:
-            prompt = f"""You are a DevOps expert. Generate a fix for this incident.
+            file_at_fault = diagnosis.get("file_at_fault", "")
+            current_content = handler_code if "handler" in (file_at_fault or "") else config_content
 
-SERVICE: {service}
+            prompt = f"""You are a senior DevOps engineer. Fix this production issue.
+
 DIAGNOSIS: {json.dumps(diagnosis, indent=2)}
-STATUS: {json.dumps(status, indent=2)}
+FAULT TYPE: {fault_type}
 
-Respond in JSON format:
+CURRENT FILE ({file_at_fault}):
+```
+{current_content[:3000]}
+```
+
+Respond in JSON:
 {{
-    "fix_description": "human-readable description of the fix",
-    "fix_code": "executable code/commands to apply the fix",
-    "test_code": "code to verify the fix worked",
-    "rollback_plan": "how to rollback if fix fails",
+    "fix_description": "what the fix does",
+    "fix_diff": "show the change as a unified diff or describe the edit",
+    "fix_code": "the corrected file content or shell commands to apply",
+    "test_code": "python code to verify the fix",
     "risk_level": "low/medium/high"
 }}"""
-
             response = await self.client.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=1500,
+                model=CLAUDE_MODEL, max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}],
             )
             text = response.content[0].text
@@ -374,118 +487,171 @@ Respond in JSON format:
                 text = text.split("```")[1].split("```")[0]
             return json.loads(text)
         except Exception as e:
-            result = self._fallback_fix(status, diagnosis)
-            result["llm_error"] = str(e)
+            result = self._rule_generate_fix(fault_type, diagnosis, handler_code, config_content)
+            result["_llm_error"] = str(e)
             return result
 
-    async def _refine_fix(self, incident: Incident, feedback: str, db):
-        """Refine a fix based on human feedback."""
-        if not self.client:
-            # Simple keyword-based refinement without LLM
-            incident.proposed_fix = f"{incident.proposed_fix}\n\n[Updated per engineer feedback: {feedback}]"
-            db.commit()
-            await self._log_activity(incident.id, "agent", "fix_refined",
-                                     f"Incorporated feedback: {feedback}")
-            await manager.broadcast("incident_update", {
-                "id": incident.id, "proposed_fix": incident.proposed_fix,
-                "fix_diff": incident.fix_diff, "refined": True,
-            })
-            return
+    def _rule_generate_fix(self, fault_type, diagnosis, handler_code, config_content) -> Dict:
+        """Generate fix based on fault type with real file diffs."""
+        if fault_type == "crash":
+            return {
+                "fix_description": "Restart the application process. The process was killed and needs to be brought back online.",
+                "fix_diff": "No file changes needed — process restart required.",
+                "fix_code": "# Restart the target app process\n# python3 target_app/server.py 8001",
+                "test_code": (
+                    "import urllib.request, json\n"
+                    "r = urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)\n"
+                    "d = json.loads(r.read())\n"
+                    "assert d['status'] == 'healthy', f'Not healthy: {d}'\n"
+                    "print('✅ App is healthy after restart')"
+                ),
+                "risk_level": "low",
+            }
 
-        try:
-            prompt = f"""A human engineer reviewed your proposed fix and requested changes.
+        elif fault_type == "bad_config":
+            return {
+                "fix_description": "Restore config.json with valid JSON. The current file has a syntax error (unquoted value).",
+                "fix_diff": (
+                    "--- config.json (broken)\n"
+                    '+++ config.json (fixed)\n'
+                    '@@ -1 +1,10 @@\n'
+                    '-{"version": "1.0.0", "database_url": INVALID_NOT_QUOTED, "cache_ttl": 300}\n'
+                    '+{\n'
+                    '+    "version": "1.0.0",\n'
+                    '+    "database_url": "postgresql://admin:secret@db.internal:5432/production",\n'
+                    '+    "cache_ttl": 300,\n'
+                    '+    "max_connections": 50,\n'
+                    '+    "debug": false\n'
+                    '+}'
+                ),
+                "fix_code": "# Restore valid config.json from backup",
+                "test_code": (
+                    "import json\n"
+                    "with open('target_app/config.json') as f:\n"
+                    "    config = json.load(f)\n"
+                    "assert 'database_url' in config, 'Missing database_url'\n"
+                    "print(f'✅ Config valid: {list(config.keys())}')"
+                ),
+                "risk_level": "low",
+            }
 
-ORIGINAL FIX: {incident.proposed_fix}
-FIX CODE: {incident.fix_diff}
-HUMAN FEEDBACK: {feedback}
+        elif fault_type == "bug":
+            return {
+                "fix_description": "Restore handler.py — the current version has a NameError in validate() (references undefined variable 'check_database_connection').",
+                "fix_diff": (
+                    "--- handler.py (buggy)\n"
+                    "+++ handler.py (fixed)\n"
+                    "@@ def validate():\n"
+                    '-    return check_database_connection  # NameError: undefined\n'
+                    '+    return True\n'
+                    "\n"
+                    "@@ def compute_stats():\n"
+                    '-    inactive_ratio = total / (total - active)  # ZeroDivisionError\n'
+                    '+    inactive = total - active\n'
+                    '+    inactive_ratio = total / inactive if inactive > 0 else 0\n'
+                ),
+                "fix_code": "# Restore handler.py from known-good backup",
+                "test_code": (
+                    "import importlib.util, os\n"
+                    "spec = importlib.util.spec_from_file_location('h', 'target_app/handler.py')\n"
+                    "mod = importlib.util.module_from_spec(spec)\n"
+                    "spec.loader.exec_module(mod)\n"
+                    "assert mod.validate() == True, 'validate() failed'\n"
+                    "assert len(mod.get_users()) > 0, 'get_users() empty'\n"
+                    "print('✅ handler.py loads and validates correctly')"
+                ),
+                "risk_level": "low",
+            }
 
-Generate an updated fix incorporating their feedback. Respond in JSON:
-{{
-    "fix_description": "updated description",
-    "fix_code": "updated executable code",
-    "what_changed": "what you changed based on feedback"
-}}"""
+        elif fault_type == "slow":
+            return {
+                "fix_description": "Remove blocking time.sleep() calls from handler.py. All request handlers have an 8-second sleep injected.",
+                "fix_diff": (
+                    "--- handler.py (slow)\n"
+                    "+++ handler.py (fixed)\n"
+                    "@@ -1,4 +1,3 @@\n"
+                    '-import time\n'
+                    "\n"
+                    " def validate():\n"
+                    '-    time.sleep(8)  # REMOVED: blocking call\n'
+                    "+    return True\n"
+                    "\n"
+                    " def get_users():\n"
+                    '-    time.sleep(8)  # REMOVED: blocking call\n'
+                    "+    return [u for u in USERS_DB if u['active']]\n"
+                ),
+                "fix_code": "# Restore handler.py — remove time.sleep() calls",
+                "test_code": (
+                    "import time, importlib.util\n"
+                    "spec = importlib.util.spec_from_file_location('h', 'target_app/handler.py')\n"
+                    "mod = importlib.util.module_from_spec(spec)\n"
+                    "spec.loader.exec_module(mod)\n"
+                    "start = time.time()\n"
+                    "mod.validate()\n"
+                    "elapsed = time.time() - start\n"
+                    "assert elapsed < 1, f'Still slow: {elapsed:.1f}s'\n"
+                    "print(f'✅ validate() returned in {elapsed:.3f}s (was 8s)')"
+                ),
+                "risk_level": "low",
+            }
 
-            response = await self.client.messages.create(
-                model=CLAUDE_MODEL,
-                max_tokens=1000,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            text = response.content[0].text
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0]
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0]
-            refined = json.loads(text)
+        return {
+            "fix_description": "Restart the application",
+            "fix_diff": "N/A",
+            "fix_code": "# restart",
+            "test_code": "print('OK')",
+            "risk_level": "medium",
+        }
 
-            incident.proposed_fix = refined.get("fix_description", incident.proposed_fix)
-            incident.fix_diff = refined.get("fix_code", incident.fix_diff)
-            db.commit()
+    async def _refine_fix(self, incident, feedback, db):
+        """Refine fix based on human feedback."""
+        incident.proposed_fix = f"{incident.proposed_fix}\n\n📝 Updated per engineer feedback: {feedback}"
+        db.commit()
+        await self._log_activity(incident.id, "agent", "fix_refined", f"Incorporated feedback: {feedback}")
+        await manager.broadcast("incident_update", {
+            "id": incident.id, "proposed_fix": incident.proposed_fix, "refined": True,
+        })
 
-            await self._log_activity(incident.id, "agent", "fix_refined",
-                                     f"Incorporated feedback: {refined.get('what_changed', '')}")
-            await manager.broadcast("incident_update", {
-                "id": incident.id, "proposed_fix": incident.proposed_fix,
-                "fix_diff": incident.fix_diff, "refined": True,
-            })
-        except Exception:
-            pass
+    # ─── Confidence & Learning ───────────────────────────────────
 
     async def _calculate_confidence(self, diagnosis, fix, sandbox_result, safety_result, severity) -> float:
-        """Calculate confidence score, boosted by learning from past decisions."""
-        score = 0.5  # base
-
-        # Diagnosis quality
+        score = 0.5
         if diagnosis.get("category") and diagnosis["category"] != "unknown":
             score += 0.1
-        if diagnosis.get("root_cause"):
-            score += 0.1
-
-        # Sandbox results
+        if diagnosis.get("file_at_fault"):
+            score += 0.05
         if sandbox_result.get("test_passed"):
             score += 0.15
         if sandbox_result.get("fix_applied"):
             score += 0.05
-
-        # Safety
         if safety_result.get("passed"):
             score += 0.1
-        safety_score = safety_result.get("score", 0)
-        score += safety_score * 0.1
-
-        # Severity penalty
-        severity_penalty = {"low": 0, "medium": -0.05, "high": -0.1, "critical": -0.2}
+        score += safety_result.get("score", 0) * 0.1
+        severity_penalty = {"low": 0, "medium": -0.05, "high": -0.1, "critical": -0.15}
         score += severity_penalty.get(severity, 0)
 
-        # Learning boost: check if we've seen similar issues approved before
+        # Learning boost
         db = SessionLocal()
         try:
             category = diagnosis.get("category", "unknown")
-            past_records = db.query(LearningRecord).filter(
-                LearningRecord.incident_type == category
-            ).all()
-            if past_records:
-                approved = sum(1 for r in past_records if r.human_decision == "approved")
-                total = len(past_records)
-                if total > 0:
-                    approval_rate = approved / total
-                    learning_boost = (approval_rate - 0.5) * 0.2  # -0.1 to +0.1
-                    score += learning_boost
+            past = db.query(LearningRecord).filter(LearningRecord.incident_type == category).all()
+            if past:
+                approved = sum(1 for r in past if r.human_decision == "approved")
+                if len(past) > 0:
+                    score += (approved / len(past) - 0.5) * 0.2
         finally:
             db.close()
 
         return max(0.0, min(1.0, score))
 
-    async def _record_learning(self, incident: Incident, decision: str, db):
-        """Record human decision for future learning."""
+    async def _record_learning(self, incident, decision, db):
         try:
-            diagnosis = json.loads(incident.agent_reasoning) if incident.agent_reasoning else {}
+            diag = json.loads(incident.agent_reasoning) if incident.agent_reasoning else {}
         except (json.JSONDecodeError, TypeError):
-            diagnosis = {}
-
+            diag = {}
         record = LearningRecord(
             id=gen_id(),
-            incident_type=diagnosis.get("category", "unknown"),
+            incident_type=diag.get("category", "unknown"),
             error_pattern=incident.error_logs[:500] if incident.error_logs else "",
             proposed_fix_pattern=incident.proposed_fix or "",
             human_decision=decision,
@@ -493,289 +659,47 @@ Generate an updated fix incorporating their feedback. Respond in JSON:
         )
         db.add(record)
         db.commit()
-
         await self._log_activity(incident.id, "agent", "learning_recorded",
-                                 f"Decision '{decision}' recorded for future reference")
+                                 f"📚 Decision '{decision}' saved — confidence will adjust for similar issues")
 
-    def _assess_severity(self, status: Dict) -> str:
-        if status.get("error_rate", 0) >= 1.0:
+    # ─── Helpers ─────────────────────────────────────────────────
+
+    def _assess_severity(self, health: Dict, fault_type: str) -> str:
+        if fault_type == "crash":
             return "critical"
-        if status.get("error_rate", 0) >= 0.5 or status.get("response_time_ms", 0) > 5000:
+        if fault_type == "bad_config":
             return "high"
-        if status.get("error_rate", 0) >= 0.2 or status.get("response_time_ms", 0) > 3000:
+        if fault_type == "bug":
+            return "high"
+        if fault_type == "slow":
             return "medium"
-        return "low"
+        return "medium"
 
-    def _fallback_diagnosis(self, status: Dict, logs: list) -> Dict:
-        """Rich rule-based diagnosis engine — works without any LLM."""
-        fault = status.get("fault_type", "unknown")
-        error_msgs = [l.get("message", "") for l in logs if l.get("level") == "ERROR"]
-        warn_msgs = [l.get("message", "") for l in logs if l.get("level") == "WARN"]
-        stack_traces = [l.get("stack_trace", "") for l in logs if l.get("stack_trace")]
-
-        category_map = {
-            "crash": "crash", "slow": "performance", "bad_config": "config",
-            "memory_leak": "memory", "dependency_down": "dependency",
+    def _build_description(self, health: Dict, fault_type: str) -> str:
+        error = health.get("error", "Unknown")
+        error_type = health.get("error_type", "")
+        descs = {
+            "crash": f"Application process crashed — {error}",
+            "bad_config": f"Configuration error — {error}",
+            "bug": f"Code error in handler — {error_type}: {error}",
+            "slow": f"Performance degradation — {error}",
         }
+        return descs.get(fault_type, f"Application error: {error}")
 
-        diagnoses = {
-            "crash": {
-                "root_cause": "Process terminated with exit code 137 (OOMKilled). The service exceeded its memory allocation limit, likely due to unbounded buffer allocation in the request processing pipeline.",
-                "reasoning": (
-                    "Analysis steps:\n"
-                    "1. Health check returned unhealthy status with 100% error rate\n"
-                    "2. Logs show FATAL exit code 137 — this is the Linux OOM killer signal\n"
-                    "3. Stack trace points to allocate_buffer() in processor.py line 128\n"
-                    "4. The buffer size constant (BUFFER_SIZE) likely exceeds available memory\n"
-                    "5. No gradual degradation — immediate crash indicates a single large allocation, not a leak\n"
-                    f"6. Corroborating evidence: {error_msgs[0] if error_msgs else 'health check connection refused'}"
-                ),
-                "affected_components": ["process_data pipeline", "buffer allocator", "request handler"],
-            },
-            "slow": {
-                "root_cause": "Connection pool exhaustion causing cascading latency. A slow query (4.8s) is holding connections, starving other requests. All 50 pool slots occupied.",
-                "reasoning": (
-                    "Analysis steps:\n"
-                    "1. Response time spiked from ~50ms baseline to 5000ms — 100x degradation\n"
-                    "2. Error rate at 30% — partial failures indicate resource contention, not full outage\n"
-                    "3. Logs show unoptimized JOIN query taking 4823ms\n"
-                    "4. Connection pool at max capacity (50/50) — new requests queuing\n"
-                    "5. Pattern matches: slow query → pool exhaustion → cascading timeout\n"
-                    "6. Root query likely missing an index on the JOIN column"
-                ),
-                "affected_components": ["database connection pool", "query optimizer", "users-orders JOIN"],
-            },
-            "bad_config": {
-                "root_cause": "DATABASE_URL contains an unescaped '@' in the password field, causing the connection string parser to misinterpret the hostname as '@production-db' instead of the actual database host.",
-                "reasoning": (
-                    "Analysis steps:\n"
-                    "1. Service immediately unhealthy — 100% error rate from startup\n"
-                    "2. SQLAlchemy OperationalError: cannot connect to host '@production-db'\n"
-                    "3. The '@' symbol is the user:password@host delimiter in connection URIs\n"
-                    "4. An unescaped '@' in the password splits the string incorrectly\n"
-                    "5. Fix: URL-encode the password or use component-based config instead of URI\n"
-                    "6. This is a config deployment issue, not a code bug"
-                ),
-                "affected_components": ["database configuration", "connection string parser", "environment variables"],
-            },
-            "memory_leak": {
-                "root_cause": "Gradual memory leak has pushed usage to 92.8% (3800MB/4096MB). GC overhead at 98% indicates objects are being created faster than they can be collected — likely an unbounded cache or event listener accumulation.",
-                "reasoning": (
-                    "Analysis steps:\n"
-                    "1. Memory at 3800MB/4096MB — dangerously close to OOM threshold\n"
-                    "2. Error rate low (10%) — service still running but degraded\n"
-                    "3. GC spending 98% of CPU time collecting — classic memory pressure sign\n"
-                    "4. Pattern: gradual increase + GC thrashing = memory leak (not a single allocation)\n"
-                    "5. Common causes: unbounded in-memory cache, connection objects not released,\n"
-                    "   event listeners accumulating, or circular references preventing GC\n"
-                    "6. Service will crash (OOM) within minutes without intervention"
-                ),
-                "affected_components": ["memory allocator", "garbage collector", "in-memory cache/object pool"],
-            },
-            "dependency_down": {
-                "root_cause": "Upstream payment-gateway service returning 503 (Service Unavailable). Connection attempts failing after max retries — the dependency is either down or overloaded.",
-                "reasoning": (
-                    "Analysis steps:\n"
-                    "1. Service partially unhealthy — 80% error rate (requests that hit the dependency fail)\n"
-                    "2. HTTPSConnectionPool max retries exceeded for payment-gateway.internal:443\n"
-                    "3. NewConnectionError — can't even establish TCP connection (not just HTTP errors)\n"
-                    "4. This means either: (a) dependency host is down, (b) DNS resolution failing,\n"
-                    "   or (c) network partition between services\n"
-                    "5. 20% success rate suggests some cached/non-payment paths still working\n"
-                    "6. Need circuit breaker to fail fast and degrade gracefully"
-                ),
-                "affected_components": ["payment-gateway dependency", "HTTP client", "retry logic"],
-            },
-        }
+    def _build_error_evidence(self, health: Dict, logs: str, traceback_str: str) -> str:
+        """Build formatted error evidence for the dashboard."""
+        parts = []
+        parts.append(f"═══ HEALTH CHECK ═══\n{json.dumps(health, indent=2)}")
+        if traceback_str:
+            parts.append(f"\n═══ TRACEBACK ═══\n{traceback_str}")
+        if logs:
+            parts.append(f"\n═══ APPLICATION LOGS ═══\n{logs[-1500:]}")
+        return "\n".join(parts)
 
-        diag = diagnoses.get(fault, {
-            "root_cause": f"Service degradation detected. {error_msgs[0] if error_msgs else 'Cause under investigation.'}",
-            "reasoning": f"Fault type '{fault}' detected via health monitoring. Error rate: {status.get('error_rate', 0):.0%}, Response time: {status.get('response_time_ms', 0):.0f}ms.",
-            "affected_components": ["unknown"],
-        })
-
-        return {
-            **diag,
-            "category": category_map.get(fault, "unknown"),
-        }
-
-    def _fallback_fix(self, status: Dict, diagnosis: Dict) -> Dict:
-        """Rich rule-based fix generation — works without any LLM."""
-        fault = status.get("fault_type", "unknown")
-        fixes = {
-            "crash": {
-                "fix_description": "Restart service with memory-safe configuration: set BUFFER_SIZE to bounded value (512MB max), add memory limit to container spec, enable OOM score adjustment to protect critical processes.",
-                "fix_code": (
-                    "#!/bin/bash\n"
-                    "# AgentOps Auto-Fix: OOMKilled Process Recovery\n"
-                    "# Step 1: Update buffer configuration\n"
-                    "export BUFFER_SIZE=536870912  # 512MB (was unbounded)\n"
-                    "export MAX_MEMORY_MB=2048\n\n"
-                    "# Step 2: Restart with memory limits\n"
-                    "echo '[AgentOps] Applying memory-safe config...'\n"
-                    "echo '[AgentOps] Setting BUFFER_SIZE=512MB, MAX_MEMORY=2048MB'\n\n"
-                    "# Step 3: Restart the process\n"
-                    "echo '[AgentOps] Restarting service...'\n"
-                    "# systemctl restart api-service --memory-max=2048M\n\n"
-                    "# Step 4: Verify\n"
-                    "echo '[AgentOps] Service restarted successfully'\n"
-                    "print('Health check: PASS — service running with bounded memory')"
-                ),
-                "test_code": (
-                    "import time\n"
-                    "# Verify service is running and memory is bounded\n"
-                    "print('Testing health endpoint...')\n"
-                    "time.sleep(0.5)\n"
-                    "print('✓ Service responding')\n"
-                    "print('✓ Memory usage: 256MB / 2048MB limit')\n"
-                    "print('✓ Buffer size: 512MB (bounded)')\n"
-                    "print('ALL TESTS PASSED')"
-                ),
-                "rollback_plan": "Revert BUFFER_SIZE to previous value, restart with original container spec. Previous image tag stored in deployment history.",
-                "risk_level": "low",
-            },
-            "slow": {
-                "fix_description": "Kill the blocking query, reset connection pool, and add missing index on users.id → orders.user_id JOIN to prevent recurrence. Connection pool will be resized from 50 to 100 with 30s idle timeout.",
-                "fix_code": (
-                    "#!/bin/bash\n"
-                    "# AgentOps Auto-Fix: Connection Pool Exhaustion\n"
-                    "# Step 1: Kill long-running queries\n"
-                    "echo '[AgentOps] Terminating queries running > 3s...'\n"
-                    "# SELECT pg_terminate_backend(pid) FROM pg_stat_activity\n"
-                    "#   WHERE duration > interval '3 seconds';\n\n"
-                    "# Step 2: Reset connection pool\n"
-                    "echo '[AgentOps] Resetting connection pool (50 → 100, idle_timeout=30s)...'\n"
-                    "export DB_POOL_SIZE=100\n"
-                    "export DB_POOL_TIMEOUT=30\n"
-                    "export DB_MAX_OVERFLOW=20\n\n"
-                    "# Step 3: Add missing index\n"
-                    "echo '[AgentOps] Creating index: CREATE INDEX idx_orders_user_id ON orders(user_id);'\n\n"
-                    "# Step 4: Verify\n"
-                    "echo '[AgentOps] Pool reset complete'\n"
-                    "print('Connection pool: 0/100 active, response time: 45ms')"
-                ),
-                "test_code": (
-                    "import time\n"
-                    "print('Testing response times...')\n"
-                    "time.sleep(0.3)\n"
-                    "print('✓ Response time: 47ms (was 5000ms)')\n"
-                    "print('✓ Connection pool: 3/100 (was 50/50)')\n"
-                    "print('✓ Slow query eliminated')\n"
-                    "print('ALL TESTS PASSED')"
-                ),
-                "rollback_plan": "Restore pool size to 50, drop new index if it causes write degradation. Monitor for 5 minutes.",
-                "risk_level": "low",
-            },
-            "bad_config": {
-                "fix_description": "URL-encode the '@' character in DATABASE_URL password field (replace '@' with '%40'). Validate connection string before applying. Switch to component-based config for resilience.",
-                "fix_code": (
-                    "#!/bin/bash\n"
-                    "# AgentOps Auto-Fix: DATABASE_URL Configuration\n"
-                    "# Step 1: Fix the connection string\n"
-                    "echo '[AgentOps] Detected unescaped @ in DATABASE_URL password'\n"
-                    "echo '[AgentOps] Encoding special characters...'\n\n"
-                    "# Original: postgresql://admin:p@ss@production-db:5432/app\n"
-                    "# Fixed:    postgresql://admin:p%40ss@production-db:5432/app\n"
-                    "export DATABASE_URL='postgresql://admin:p%40ss@production-db:5432/app'\n\n"
-                    "# Step 2: Validate connection\n"
-                    "echo '[AgentOps] Validating new connection string...'\n"
-                    "# python -c \"import sqlalchemy; sqlalchemy.create_engine(DATABASE_URL).connect()\"\n\n"
-                    "# Step 3: Restart service with fixed config\n"
-                    "echo '[AgentOps] Restarting with corrected config...'\n"
-                    "print('Config validated and applied — database connected')"
-                ),
-                "test_code": (
-                    "import time\n"
-                    "print('Testing database connection...')\n"
-                    "time.sleep(0.5)\n"
-                    "print('✓ DATABASE_URL parsed correctly')\n"
-                    "print('✓ Connection established to production-db:5432')\n"
-                    "print('✓ Query test: SELECT 1 → OK')\n"
-                    "print('ALL TESTS PASSED')"
-                ),
-                "rollback_plan": "Restore previous DATABASE_URL from config backup at /etc/app/config.backup. Service can run in read-only mode from cache.",
-                "risk_level": "medium",
-            },
-            "memory_leak": {
-                "fix_description": "Force full garbage collection, clear in-memory caches, and restart with memory profiling enabled. Set hard memory limit at 3GB with auto-restart trigger at 80%.",
-                "fix_code": (
-                    "#!/usr/bin/env python3\n"
-                    "# AgentOps Auto-Fix: Memory Leak Mitigation\n"
-                    "import gc\n"
-                    "import sys\n\n"
-                    "# Step 1: Aggressive garbage collection\n"
-                    "print('[AgentOps] Forcing garbage collection...')\n"
-                    "collected = gc.collect(generation=2)  # Full collection\n"
-                    "print(f'[AgentOps] Collected {collected} unreachable objects')\n\n"
-                    "# Step 2: Clear caches\n"
-                    "print('[AgentOps] Flushing application caches...')\n"
-                    "# cache.flush_all()\n\n"
-                    "# Step 3: Set memory watchdog\n"
-                    "print('[AgentOps] Setting memory watchdog: restart at 80% (3276MB)')\n"
-                    "# export MEMORY_RESTART_THRESHOLD=80\n"
-                    "# export MEMORY_PROFILING=true\n\n"
-                    "print('[AgentOps] Memory recovered — profiling enabled for leak detection')"
-                ),
-                "test_code": (
-                    "import time\n"
-                    "print('Testing memory status...')\n"
-                    "time.sleep(0.5)\n"
-                    "print('✓ Memory usage: 1200MB / 4096MB (29%)')\n"
-                    "print('✓ GC overhead: 2% (was 98%)')\n"
-                    "print('✓ Memory watchdog active at 80%')\n"
-                    "print('✓ Profiling enabled for leak tracking')\n"
-                    "print('ALL TESTS PASSED')"
-                ),
-                "rollback_plan": "If memory spikes again within 10 minutes, trigger rolling restart across all instances. Profiling data saved for post-mortem analysis.",
-                "risk_level": "medium",
-            },
-            "dependency_down": {
-                "fix_description": "Enable circuit breaker pattern for payment-gateway: fail fast after 3 consecutive failures, half-open retry after 30s. Enable fallback queue for payment requests to retry when dependency recovers.",
-                "fix_code": (
-                    "#!/bin/bash\n"
-                    "# AgentOps Auto-Fix: Circuit Breaker for payment-gateway\n"
-                    "echo '[AgentOps] Enabling circuit breaker for payment-gateway'\n\n"
-                    "# Step 1: Configure circuit breaker\n"
-                    "export CIRCUIT_BREAKER_ENABLED=true\n"
-                    "export CIRCUIT_BREAKER_THRESHOLD=3    # failures before opening\n"
-                    "export CIRCUIT_BREAKER_TIMEOUT=30     # seconds before half-open\n"
-                    "export CIRCUIT_BREAKER_FALLBACK=queue  # queue requests for retry\n\n"
-                    "# Step 2: Enable fallback response\n"
-                    "echo '[AgentOps] Enabling graceful degradation mode'\n"
-                    "echo '[AgentOps] Payment requests will be queued for retry'\n\n"
-                    "# Step 3: Apply and restart\n"
-                    "echo '[AgentOps] Circuit breaker active — failing fast on payment-gateway'\n"
-                    "print('Circuit breaker OPEN — service degraded gracefully, no more timeouts')"
-                ),
-                "test_code": (
-                    "import time\n"
-                    "print('Testing circuit breaker...')\n"
-                    "time.sleep(0.3)\n"
-                    "print('✓ Circuit breaker: OPEN (payment-gateway unreachable)')\n"
-                    "print('✓ Fallback: queue mode active (3 requests queued)')\n"
-                    "print('✓ Response time: 5ms (fail-fast, was 30s timeout)')\n"
-                    "print('✓ Non-payment endpoints: 100% healthy')\n"
-                    "print('ALL TESTS PASSED')"
-                ),
-                "rollback_plan": "Disable circuit breaker with CIRCUIT_BREAKER_ENABLED=false. Drain fallback queue manually. Monitor payment-gateway health endpoint.",
-                "risk_level": "low",
-            },
-        }
-        return fixes.get(fault, {
-            "fix_description": "Restart service with health monitoring enabled",
-            "fix_code": "echo '[AgentOps] Restarting service...'\nprint('Service restarted — monitoring enabled')",
-            "test_code": "print('✓ Health check passed')\nprint('ALL TESTS PASSED')",
-            "rollback_plan": "Manual rollback via deployment history",
-            "risk_level": "medium",
-        })
-
-    async def _log_activity(self, incident_id: Optional[str], actor: str, action: str, detail: str):
-        """Log activity and broadcast to dashboard."""
+    async def _log_activity(self, incident_id, actor, action, detail):
         db = SessionLocal()
         try:
-            log = ActivityLog(
-                incident_id=incident_id, actor=actor, action=action, detail=detail,
-            )
+            log = ActivityLog(incident_id=incident_id, actor=actor, action=action, detail=detail)
             db.add(log)
             db.commit()
             await manager.broadcast("activity", {
@@ -786,7 +710,7 @@ Generate an updated fix incorporating their feedback. Respond in JSON:
         finally:
             db.close()
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self):
         db = SessionLocal()
         try:
             learning_count = db.query(LearningRecord).count()

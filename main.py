@@ -4,6 +4,7 @@ Main server: serves API, dashboard, WebSocket, and runs the agent.
 """
 import asyncio
 import json
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
@@ -186,6 +187,36 @@ async def target_app_info():
         "active_fault": app_instance.active_fault,
         "logs_tail": app_instance.get_logs(limit=10),
     }
+
+
+# ─── Live App Proxy (forwards to Blaxel sandbox or local target) ─────
+
+@app.get("/app/{path:path}")
+async def proxy_app(path: str):
+    """Proxy requests to the target app running inside the sandbox."""
+    try:
+        if app_instance.mode == "blaxel" and app_instance.sandbox:
+            r = await app_instance.sandbox.process.exec({
+                "command": f"curl -s -m 5 http://127.0.0.1:{app_instance.app_port}/{path}",
+                "wait_for_completion": True, "timeout": 8,
+            })
+            logs = r.logs or ""
+            try:
+                return JSONResponse(content=json.loads(logs))
+            except json.JSONDecodeError:
+                return JSONResponse(content={"raw": logs[:2000], "error": "non-JSON response"}, status_code=502)
+        else:
+            import httpx
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(f"http://127.0.0.1:{app_instance.app_port}/{path}")
+                return JSONResponse(content=resp.json(), status_code=resp.status_code)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e), "status": "app_unreachable"}, status_code=503)
+
+
+@app.get("/live")
+async def live_app_page():
+    return FileResponse(os.path.join(os.path.dirname(__file__), "static", "live.html"))
 
 
 # ─── Agent Status ────────────────────────────────────────────────────

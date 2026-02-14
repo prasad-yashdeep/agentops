@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live App — E-Commerce API</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = { theme: { extend: { fontFamily: { sans: ['Inter'], mono: ['JetBrains Mono'] } } } }
+    </script>
+    <style>
+        body { background: #09090b; font-family: 'Inter', sans-serif; color: #fafafa; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        @keyframes pulse-ring { 0% { transform: scale(0.8); opacity: 1; } 100% { transform: scale(2.5); opacity: 0; } }
+        .pulse-ring { animation: pulse-ring 1.5s ease-out infinite; }
+        @keyframes fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        .fade-in { animation: fade-up 0.4s ease-out forwards; }
+        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+        .shimmer { background: linear-gradient(90deg, #18181b 25%, #27272a 50%, #18181b 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
+        ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 3px; }
+    </style>
+</head>
+<body class="min-h-screen">
+    <!-- Header -->
+    <header class="border-b border-zinc-800/50 px-6 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <span class="text-xl">🛒</span>
+            <span class="font-bold text-lg">ShopAPI</span>
+            <span class="text-xs text-zinc-500 border border-zinc-800 rounded px-2 py-0.5">E-Commerce API</span>
+            <span id="env-badge" class="text-xs text-purple-400 border border-purple-500/20 bg-purple-500/5 rounded px-2 py-0.5">Loading...</span>
+        </div>
+        <div class="flex items-center gap-4">
+            <div class="flex items-center gap-2 text-xs">
+                <div class="relative">
+                    <div id="health-dot" class="w-2.5 h-2.5 rounded-full bg-zinc-600"></div>
+                    <div id="health-ring" class="absolute inset-0 w-2.5 h-2.5 rounded-full bg-zinc-600"></div>
+                </div>
+                <span id="health-text" class="text-zinc-500">Connecting...</span>
+            </div>
+            <div class="w-px h-4 bg-zinc-800"></div>
+            <a href="/" class="text-xs text-purple-400 hover:text-purple-300 transition">← AgentOps Dashboard</a>
+        </div>
+    </header>
+
+    <main class="max-w-5xl mx-auto px-6 py-8">
+        <!-- Health Card -->
+        <div id="health-card" class="border border-zinc-800 rounded-2xl p-6 mb-6">
+            <div class="flex items-center gap-3 mb-4">
+                <span class="text-lg">💚</span>
+                <h2 class="font-bold text-lg">System Health</h2>
+                <span id="uptime" class="text-xs text-zinc-500 ml-auto mono"></span>
+            </div>
+            <div id="health-grid" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="shimmer h-16 rounded-xl"></div>
+                <div class="shimmer h-16 rounded-xl"></div>
+                <div class="shimmer h-16 rounded-xl"></div>
+                <div class="shimmer h-16 rounded-xl"></div>
+            </div>
+        </div>
+
+        <!-- Endpoint Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <!-- Products -->
+            <div class="border border-zinc-800 rounded-2xl p-5">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-2">
+                        <span>📦</span>
+                        <h3 class="font-semibold">Products</h3>
+                    </div>
+                    <button onclick="fetchEndpoint('products')" class="text-xs text-zinc-500 hover:text-purple-400 transition">↻ Refresh</button>
+                </div>
+                <div class="flex items-center gap-2 mb-3">
+                    <code class="text-xs mono text-green-400 bg-green-500/10 px-2 py-0.5 rounded">GET</code>
+                    <code class="text-xs mono text-zinc-500">/api/products</code>
+                </div>
+                <div id="products-data" class="space-y-2 max-h-72 overflow-y-auto">
+                    <div class="shimmer h-10 rounded-lg"></div>
+                    <div class="shimmer h-10 rounded-lg"></div>
+                    <div class="shimmer h-10 rounded-lg"></div>
+                </div>
+            </div>
+
+            <!-- Orders -->
+            <div class="border border-zinc-800 rounded-2xl p-5">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-2">
+                        <span>🧾</span>
+                        <h3 class="font-semibold">Orders</h3>
+                    </div>
+                    <button onclick="fetchEndpoint('orders')" class="text-xs text-zinc-500 hover:text-purple-400 transition">↻ Refresh</button>
+                </div>
+                <div class="flex items-center gap-2 mb-3">
+                    <code class="text-xs mono text-green-400 bg-green-500/10 px-2 py-0.5 rounded">GET</code>
+                    <code class="text-xs mono text-zinc-500">/api/orders</code>
+                </div>
+                <div id="orders-data" class="space-y-2 max-h-72 overflow-y-auto">
+                    <div class="shimmer h-10 rounded-lg"></div>
+                    <div class="shimmer h-10 rounded-lg"></div>
+                </div>
+            </div>
+
+            <!-- Analytics -->
+            <div class="border border-zinc-800 rounded-2xl p-5">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-2">
+                        <span>📊</span>
+                        <h3 class="font-semibold">Analytics</h3>
+                    </div>
+                    <button onclick="fetchEndpoint('analytics')" class="text-xs text-zinc-500 hover:text-purple-400 transition">↻ Refresh</button>
+                </div>
+                <div class="flex items-center gap-2 mb-3">
+                    <code class="text-xs mono text-green-400 bg-green-500/10 px-2 py-0.5 rounded">GET</code>
+                    <code class="text-xs mono text-zinc-500">/api/analytics</code>
+                </div>
+                <div id="analytics-data" class="max-h-72 overflow-y-auto">
+                    <div class="shimmer h-32 rounded-lg"></div>
+                </div>
+            </div>
+
+            <!-- Users -->
+            <div class="border border-zinc-800 rounded-2xl p-5">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-2">
+                        <span>👥</span>
+                        <h3 class="font-semibold">Users</h3>
+                    </div>
+                    <button onclick="fetchEndpoint('users')" class="text-xs text-zinc-500 hover:text-purple-400 transition">↻ Refresh</button>
+                </div>
+                <div class="flex items-center gap-2 mb-3">
+                    <code class="text-xs mono text-green-400 bg-green-500/10 px-2 py-0.5 rounded">GET</code>
+                    <code class="text-xs mono text-zinc-500">/api/users</code>
+                </div>
+                <div id="users-data" class="space-y-2 max-h-72 overflow-y-auto">
+                    <div class="shimmer h-10 rounded-lg"></div>
+                    <div class="shimmer h-10 rounded-lg"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Raw JSON Viewer -->
+        <div class="border border-zinc-800 rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                    <span>🔌</span>
+                    <h3 class="font-semibold">API Explorer</h3>
+                </div>
+                <div class="flex gap-2 text-xs">
+                    <button onclick="hitEndpoint('health')" class="bg-zinc-800 hover:bg-zinc-700 px-3 py-1 rounded-lg transition">/health</button>
+                    <button onclick="hitEndpoint('api/products')" class="bg-zinc-800 hover:bg-zinc-700 px-3 py-1 rounded-lg transition">/api/products</button>
+                    <button onclick="hitEndpoint('api/orders')" class="bg-zinc-800 hover:bg-zinc-700 px-3 py-1 rounded-lg transition">/api/orders</button>
+                    <button onclick="hitEndpoint('api/analytics')" class="bg-zinc-800 hover:bg-zinc-700 px-3 py-1 rounded-lg transition">/api/analytics</button>
+                    <button onclick="hitEndpoint('api/users')" class="bg-zinc-800 hover:bg-zinc-700 px-3 py-1 rounded-lg transition">/api/users</button>
+                    <button onclick="hitEndpoint('api/checkout')" class="bg-zinc-800 hover:bg-zinc-700 px-3 py-1 rounded-lg transition">/api/checkout</button>
+                </div>
+            </div>
+            <div id="explorer-url" class="text-xs mono text-zinc-600 mb-2">Click an endpoint above...</div>
+            <pre id="explorer-json" class="text-xs mono bg-zinc-950 border border-zinc-800 rounded-xl p-4 max-h-64 overflow-auto text-zinc-400 whitespace-pre-wrap">{ }</pre>
+        </div>
+    </main>
+
+    <script>
+    // ─── Data Loading ───────────────────────────────────────────────
+    async function fetchJSON(path) {
+        try {
+            const r = await fetch(`/app/${path}`);
+            return await r.json();
+        } catch(e) {
+            return { error: e.message };
+        }
+    }
+
+    async function loadAll() {
+        const [health, target] = await Promise.all([
+            fetchJSON('health'),
+            fetch('/api/target-app').then(r=>r.json()),
+        ]);
+
+        // Environment badge
+        const badge = document.getElementById('env-badge');
+        if (target.mode === 'blaxel') {
+            badge.textContent = `☁️ Blaxel Sandbox: ${target.sandbox}`;
+            badge.className = 'text-xs text-purple-400 border border-purple-500/20 bg-purple-500/5 rounded px-2 py-0.5';
+        } else {
+            badge.textContent = `💻 Local: localhost:${target.port}`;
+            badge.className = 'text-xs text-zinc-400 border border-zinc-700 bg-zinc-800 rounded px-2 py-0.5';
+        }
+
+        // Health indicator
+        updateHealthDot(health);
+
+        // Health grid
+        if (!health.error) {
+            const d = health.data || health;
+            document.getElementById('health-grid').innerHTML = `
+                <div class="bg-zinc-900 rounded-xl p-3 text-center fade-in">
+                    <div class="text-2xl font-bold ${d.status === 'healthy' ? 'text-green-400' : 'text-red-400'}">${d.status === 'healthy' ? '✓' : '✗'}</div>
+                    <div class="text-xs text-zinc-500 mt-1">Status</div>
+                </div>
+                <div class="bg-zinc-900 rounded-xl p-3 text-center fade-in" style="animation-delay:0.1s">
+                    <div class="text-2xl font-bold text-blue-400 mono">${d.version || '—'}</div>
+                    <div class="text-xs text-zinc-500 mt-1">Version</div>
+                </div>
+                <div class="bg-zinc-900 rounded-xl p-3 text-center fade-in" style="animation-delay:0.2s">
+                    <div class="text-2xl font-bold text-purple-400 mono">${d.requests_served || 0}</div>
+                    <div class="text-xs text-zinc-500 mt-1">Requests</div>
+                </div>
+                <div class="bg-zinc-900 rounded-xl p-3 text-center fade-in" style="animation-delay:0.3s">
+                    <div class="text-2xl font-bold text-amber-400 mono">${formatUptime(d.uptime_seconds)}</div>
+                    <div class="text-xs text-zinc-500 mt-1">Uptime</div>
+                </div>
+            `;
+            document.getElementById('uptime').textContent = d.environment || '';
+        } else {
+            document.getElementById('health-grid').innerHTML = `
+                <div class="col-span-4 bg-red-500/5 border border-red-500/20 rounded-xl p-4 text-center">
+                    <div class="text-red-400 font-semibold">⚠️ App Unreachable</div>
+                    <div class="text-xs text-zinc-500 mt-1">${health.error || 'Connection failed'}</div>
+                </div>
+            `;
+        }
+
+        fetchEndpoint('products');
+        fetchEndpoint('orders');
+        fetchEndpoint('analytics');
+        fetchEndpoint('users');
+    }
+
+    async function fetchEndpoint(name) {
+        const el = document.getElementById(`${name}-data`);
+        const data = await fetchJSON(`api/${name}`);
+
+        if (data.error) {
+            el.innerHTML = `<div class="bg-red-500/5 border border-red-500/20 rounded-lg p-3 text-xs text-red-400">
+                <strong>Error:</strong> ${data.error}${data.type ? ` (${data.type})` : ''}
+                ${data.traceback ? `<pre class="mt-2 text-zinc-600 whitespace-pre-wrap">${esc(data.traceback).slice(0,300)}</pre>` : ''}
+            </div>`;
+            return;
+        }
+
+        if (name === 'products') renderProducts(el, data);
+        else if (name === 'orders') renderOrders(el, data);
+        else if (name === 'analytics') renderAnalytics(el, data);
+        else if (name === 'users') renderUsers(el, data);
+    }
+
+    function renderProducts(el, data) {
+        const products = data.products || data;
+        if (!Array.isArray(products)) { el.innerHTML = `<pre class="text-xs mono text-zinc-500">${JSON.stringify(data,null,2)}</pre>`; return; }
+        el.innerHTML = products.map((p,i) => `
+            <div class="flex items-center gap-3 bg-zinc-900 rounded-lg px-3 py-2 fade-in" style="animation-delay:${i*0.05}s">
+                <span class="text-lg">${p.category === 'electronics' ? '💻' : p.category === 'accessories' ? '🎧' : p.category === 'wearables' ? '⌚' : p.category === 'audio' ? '🔊' : '📦'}</span>
+                <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium truncate">${p.name}</div>
+                    <div class="text-xs text-zinc-500">${p.category || ''} · ${p.stock || 0} in stock</div>
+                </div>
+                <div class="text-sm font-bold text-green-400 mono">$${(p.price||0).toFixed(2)}</div>
+            </div>
+        `).join('');
+    }
+
+    function renderOrders(el, data) {
+        const orders = data.orders || data;
+        if (!Array.isArray(orders)) { el.innerHTML = `<pre class="text-xs mono text-zinc-500">${JSON.stringify(data,null,2)}</pre>`; return; }
+        el.innerHTML = orders.map((o,i) => `
+            <div class="flex items-center gap-3 bg-zinc-900 rounded-lg px-3 py-2 fade-in" style="animation-delay:${i*0.05}s">
+                <span class="text-xs mono text-zinc-600">#${o.id || i+1}</span>
+                <div class="flex-1 min-w-0">
+                    <div class="text-sm">${(o.items||[]).length} item${(o.items||[]).length!==1?'s':''}</div>
+                    <div class="text-xs text-zinc-500">${o.status || '—'}</div>
+                </div>
+                <div class="text-sm font-bold text-amber-400 mono">$${(o.total||0).toFixed(2)}</div>
+            </div>
+        `).join('');
+    }
+
+    function renderAnalytics(el, data) {
+        const a = data.analytics || data;
+        if (typeof a !== 'object') { el.innerHTML = `<pre class="text-xs mono text-zinc-500">${JSON.stringify(data,null,2)}</pre>`; return; }
+        el.innerHTML = `
+            <div class="grid grid-cols-2 gap-3 fade-in">
+                <div class="bg-zinc-900 rounded-lg p-3 text-center">
+                    <div class="text-xl font-bold text-green-400 mono">$${(a.total_revenue||0).toFixed(2)}</div>
+                    <div class="text-xs text-zinc-500">Revenue</div>
+                </div>
+                <div class="bg-zinc-900 rounded-lg p-3 text-center">
+                    <div class="text-xl font-bold text-blue-400 mono">${a.total_orders||0}</div>
+                    <div class="text-xs text-zinc-500">Orders</div>
+                </div>
+                <div class="bg-zinc-900 rounded-lg p-3 text-center">
+                    <div class="text-xl font-bold text-purple-400 mono">$${(a.avg_order_value||0).toFixed(2)}</div>
+                    <div class="text-xs text-zinc-500">Avg Order</div>
+                </div>
+                <div class="bg-zinc-900 rounded-lg p-3 text-center">
+                    <div class="text-xl font-bold text-amber-400 mono">${((a.conversion_rate||0)*100).toFixed(1)}%</div>
+                    <div class="text-xs text-zinc-500">Conversion</div>
+                </div>
+            </div>
+            ${a.top_products ? `<div class="mt-3 text-xs text-zinc-500">Top: ${a.top_products.map(p=>p.name||p).join(', ')}</div>` : ''}
+        `;
+    }
+
+    function renderUsers(el, data) {
+        const users = data.users || data;
+        if (!Array.isArray(users)) { el.innerHTML = `<pre class="text-xs mono text-zinc-500">${JSON.stringify(data,null,2)}</pre>`; return; }
+        el.innerHTML = users.map((u,i) => `
+            <div class="flex items-center gap-3 bg-zinc-900 rounded-lg px-3 py-2 fade-in" style="animation-delay:${i*0.05}s">
+                <div class="w-7 h-7 rounded-full bg-purple-500/20 flex items-center justify-center text-xs font-bold text-purple-400">${(u.name||'?')[0]}</div>
+                <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium">${u.name}</div>
+                    <div class="text-xs text-zinc-500">${u.email || ''}</div>
+                </div>
+                <span class="text-xs ${u.tier === 'premium' ? 'text-amber-400' : u.tier === 'vip' ? 'text-purple-400' : 'text-zinc-500'}">${u.tier || 'standard'}</span>
+            </div>
+        `).join('');
+    }
+
+    // ─── API Explorer ───────────────────────────────────────────────
+    async function hitEndpoint(path) {
+        const urlEl = document.getElementById('explorer-url');
+        const jsonEl = document.getElementById('explorer-json');
+        urlEl.innerHTML = `<span class="text-green-400">GET</span> <span class="text-zinc-300">/${path}</span> <span class="text-zinc-600">— loading...</span>`;
+        jsonEl.textContent = '...';
+
+        const start = performance.now();
+        const data = await fetchJSON(path);
+        const ms = (performance.now() - start).toFixed(0);
+
+        const isError = !!data.error;
+        urlEl.innerHTML = `<span class="text-green-400">GET</span> <span class="text-zinc-300">/${path}</span> <span class="${isError ? 'text-red-400' : 'text-green-400'}">${isError ? '✗ error' : '✓ 200 OK'}</span> <span class="text-zinc-600">${ms}ms</span>`;
+        jsonEl.innerHTML = syntaxHL(JSON.stringify(data, null, 2));
+    }
+
+    // ─── Helpers ────────────────────────────────────────────────────
+    function updateHealthDot(h) {
+        const dot = document.getElementById('health-dot');
+        const ring = document.getElementById('health-ring');
+        const text = document.getElementById('health-text');
+        const ok = h.healthy || (h.data && h.data.status === 'healthy');
+        dot.className = `w-2.5 h-2.5 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'}`;
+        ring.className = `absolute inset-0 w-2.5 h-2.5 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'} pulse-ring`;
+        text.textContent = ok ? 'Healthy' : (h.error || 'Error');
+        text.className = ok ? 'text-zinc-400' : 'text-red-400';
+    }
+
+    function formatUptime(s) {
+        if (!s) return '—';
+        if (s < 60) return `${Math.floor(s)}s`;
+        if (s < 3600) return `${Math.floor(s/60)}m`;
+        return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
+    }
+
+    function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    function syntaxHL(json) {
+        return esc(json)
+            .replace(/"([^"]+)":/g, '<span class="text-purple-400">"$1"</span>:')
+            .replace(/: "([^"]*)"/g, ': <span class="text-green-400">"$1"</span>')
+            .replace(/: (\d+\.?\d*)/g, ': <span class="text-amber-400">$1</span>')
+            .replace(/: (true|false|null)/g, ': <span class="text-blue-400">$1</span>');
+    }
+
+    // ─── Init ───────────────────────────────────────────────────────
+    loadAll();
+    setInterval(async () => {
+        const h = await fetchJSON('health');
+        updateHealthDot(h);
+    }, 5000);
+    </script>
+</body>
+</html>

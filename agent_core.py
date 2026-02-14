@@ -338,12 +338,12 @@ class AgentOps:
         try:
             result = await app_instance.apply_fix(fault_type)
 
-            if fault_type == "crash":
-                # Need to restart the process
+            # Restart the app process for faults that modify code (module cache)
+            if fault_type in ("crash", "slow", "bug", "bad_config"):
                 await app_instance.restart()
 
             # Verify the fix worked
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
             health = await app_instance.health_check()
 
             if health.get("healthy"):

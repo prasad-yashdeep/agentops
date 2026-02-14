@@ -133,9 +133,24 @@ class MonitoredApp:
         self.local_process = None
 
     async def restart(self):
-        await self.stop()
-        await asyncio.sleep(0.5)
-        await self.start()
+        """Kill and restart the app process (clears Python module cache)."""
+        if self.mode == "blaxel" and self.sandbox:
+            try:
+                await self.sandbox.process.kill("ecommerce-api")
+            except:
+                pass
+            await asyncio.sleep(1)
+            await self.sandbox.process.exec({
+                "name": "ecommerce-api",
+                "command": f"cd {BL_APP_DIR} && python3 server.py {BL_APP_PORT}",
+                "wait_for_completion": False,
+            })
+            await asyncio.sleep(2)
+            print("[AgentOps] Blaxel app restarted")
+        else:
+            await self.stop()
+            await asyncio.sleep(0.5)
+            await self._start_local()
 
     def is_running(self) -> bool:
         if self.mode == "blaxel":

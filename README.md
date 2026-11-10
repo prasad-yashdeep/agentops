@@ -22,7 +22,7 @@ Built in 5 hours at the **Iterate x CBS AI Club Hackathon** at Columbia Business
 | [**🛒 Shop**](https://her-believe-page-bean.trycloudflare.com/shop) | E-commerce storefront — browse products, add to cart, checkout |
 | [**📡 Live API**](https://her-believe-page-bean.trycloudflare.com/live) | Real-time API viewer — products, orders, analytics, users (auto-refreshes) |
 
-**Team Logins:** Bhumika (`bds9746@nyu.edu`) · Yash (`yp2693@nyu.edu`) · Shweta (`ss19623@nyu.edu`) — password: `1234`
+**Team:** Bhumika · Yash · Shweta
 
 ---
 
@@ -287,7 +287,7 @@ ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
 - **Dashboard**: https://her-believe-page-bean.trycloudflare.com
 - **Live App**: https://her-believe-page-bean.trycloudflare.com/live
 - **Shop**: https://her-believe-page-bean.trycloudflare.com/shop
-- **Team Logins**: Bhumika / Yash / Shweta (password: `1234`)
+- **Team**: Bhumika / Yash / Shweta
 
 ---
 
